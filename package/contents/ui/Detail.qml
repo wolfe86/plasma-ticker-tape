@@ -1197,6 +1197,8 @@ ColumnLayout {
     // The eight checks from SEC filings (the scanner's
     // pillars.py), each with its figure and target. Known already for
     // companies in a long-term value list; otherwise worked out on request.
+    // Hidden when the screen's own scorecard is showing, so a quote opened
+    // from a screen shows that screen's card and no other.
     readonly property var value: ticker.screener.valueData[entry.symbol] || localValue
     property var localValue: null
     property bool valueLoading: false
@@ -1211,7 +1213,7 @@ ColumnLayout {
         }, 120)
     }
     ColumnLayout {
-        visible: detail.tab === 0 && detail.kind === "EQUITY"
+        visible: detail.tab === 0 && detail.kind === "EQUITY" && !detail.cardShown
         Layout.fillWidth: true
         Layout.leftMargin: Kirigami.Units.largeSpacing
         Layout.rightMargin: Kirigami.Units.largeSpacing

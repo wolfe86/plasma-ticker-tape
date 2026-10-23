@@ -156,11 +156,11 @@ Right-click the tape → **Configure Plasma Ticker Tape…**
 | Company names for news ranking | CNBC quotes |
 | News for non-stock symbols | Google News RSS |
 
-> [!warning] These are not official data feeds
-> Except for SEC EDGAR, none of these sources offers a documented public API for this use. They can change or stop answering without notice, and a screen or column will go empty until the scanner is updated. Quotes may be delayed. Check each site's terms for your own use. This project is not affiliated with any of them.
+> [!WARNING]
+> **These are not official data feeds.** Except for SEC EDGAR, none of these sources offers a documented public API for this use. They can change or stop answering without notice, and a screen or column will go empty until the scanner is updated. Quotes may be delayed. Check each site's terms for your own use. This project is not affiliated with any of them.
 
-> [!caution] Not investment advice
-> This is a tool for watching the market. Its screens, scores and ratings are mechanical filters, not recommendations.
+> [!CAUTION]
+> **Not investment advice.** This is a tool for watching the market. Its screens, scores and ratings are mechanical filters, not recommendations.
 
 ---
 

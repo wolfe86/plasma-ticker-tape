@@ -1,0 +1,21 @@
+{
+    "KPlugin": {
+        "Id": "org.wolfe.marketticker",
+        "Name": "Plasma Ticker Tape",
+        "Description": "Scrolling market tape with a watchlist, live market screeners with scorecards, an economic and earnings calendar, and market news",
+        "Icon": "office-chart-line",
+        "Category": "Online Services",
+        "Authors": [
+            {
+                "Name": "Matt Wolfe"
+            }
+        ],
+        "Copyright": "© 2026 Matt Wolfe",
+        "Website": "https://github.com/wolfe86/plasma-ticker-tape",
+        "BugReportUrl": "https://github.com/wolfe86/plasma-ticker-tape/issues",
+        "Version": "1.0",
+        "License": "GPL-2.0-or-later"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

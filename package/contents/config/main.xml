@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+
+  <group name="General">
+    <!-- The watchlist, in display order, as a JSON array of
+         {symbol, label, name, star}. `symbol` is the Yahoo symbol, `label` is
+         what the tape prints, `star` puts it on the tape. The default is the
+         seven the tape carried before settings existed, all starred. -->
+    <entry name="symbols" type="String">
+      <default>[{"symbol":"^GSPC","label":"S&amp;P 500","name":"S&amp;P 500","star":true},{"symbol":"^IXIC","label":"NASDAQ","name":"NASDAQ Composite","star":true},{"symbol":"^DJI","label":"DOW","name":"Dow Jones","star":true},{"symbol":"^SOX","label":"SOX","name":"PHLX Semiconductor","star":true},{"symbol":"^VIX","label":"VIX","name":"VIX","star":true},{"symbol":"DX-Y.NYB","label":"DXY","name":"US Dollar Index","star":true},{"symbol":"BTC-USD","label":"BTC","name":"Bitcoin","star":true}]</default>
+    </entry>
+    <entry name="scrollSpeed" type="Int">
+      <label>Scroll speed in pixels per second</label>
+      <default>30</default>
+      <min>5</min>
+      <max>150</max>
+    </entry>
+    <entry name="tapeWidth" type="Int">
+      <label>Width of the tape in grid units</label>
+      <default>12</default>
+      <min>4</min>
+      <max>60</max>
+    </entry>
+    <entry name="fearLine" type="Int">
+      <label>VIX level at and above which it shows red</label>
+      <default>20</default>
+      <min>5</min>
+      <max>90</max>
+    </entry>
+    <entry name="pollSeconds" type="Int">
+      <label>Seconds between refreshes</label>
+      <default>60</default>
+      <min>15</min>
+      <max>900</max>
+    </entry>
+    <!-- The screener tab (ScreenerEngine.qml). `screenerView` is the feed
+         last shown: "gainers" (the default: the market's top gainers),
+         "running" (small-cap Running Up) or "hod" (small-cap High of Day
+         Momentum). The rest shape the two small-cap feeds. -->
+    <!-- The screens, as a JSON array (shape in ui/screens.js). Empty means
+         the starting three (Running Up, High of Day, Top Gainers), built
+         from the older single-purpose settings below, which are otherwise
+         no longer read by the engine. -->
+    <entry name="screens" type="String">
+      <default></default>
+    </entry>
+    <!-- The scorecards, as a JSON array (shape in ui/scorecards.js). Empty
+         means the starting one, Small-cap momentum. -->
+    <entry name="scorecards" type="String">
+      <default></default>
+    </entry>
+    <!-- Long-term value: the smallest company considered, and whether the
+         Deep Value screen and scorecard have been added to saved lists. -->
+    <entry name="valueCapMin" type="Double">
+      <default>2000000000</default>
+    </entry>
+    <entry name="rankedValueColumns" type="Bool">
+      <default>false</default>
+    </entry>
+    <entry name="losersAdded" type="Bool">
+      <default>false</default>
+    </entry>
+    <entry name="valueAdded" type="Bool">
+      <default>false</default>
+    </entry>
+    <entry name="screenerView" type="String">
+      <default>gainers</default>
+    </entry>
+    <!-- Legacy: the price band the first scorecard and High of Day screen
+         are built from, the first time only. -->
+    <entry name="screenPriceMin" type="Double">
+      <label>Lowest price in the starting price band</label>
+      <default>1</default>
+    </entry>
+    <entry name="screenPriceMax" type="Double">
+      <label>Highest price in the starting price band</label>
+      <default>20</default>
+    </entry>
+    <!-- The pool: every stock trading poolMinVolume+ shares today or
+         averaging poolMinAvg+ a day. Watched every passSeconds. -->
+    <entry name="poolMinVolume" type="Int">
+      <default>100000</default>
+    </entry>
+    <entry name="poolMinAvg" type="Int">
+      <default>300000</default>
+    </entry>
+    <entry name="passSeconds" type="Int">
+      <default>30</default>
+      <min>15</min>
+      <max>120</max>
+    </entry>
+    <!-- Running Up: runPct% above the lowest price in the last runWindow
+         minutes, for the starting Running Up screen. -->
+    <entry name="runPct" type="Double">
+      <default>3</default>
+    </entry>
+    <entry name="runWindow" type="Int">
+      <default>2</default>
+      <min>1</min>
+      <max>10</max>
+    </entry>
+    <entry name="hodMinChange" type="Double">
+      <label>High of Day: minimum gain on the day, in percent</label>
+      <default>10</default>
+    </entry>
+    <entry name="hodMinRvol" type="Double">
+      <label>High of Day: minimum relative volume for the day</label>
+      <default>1</default>
+    </entry>
+    <!-- The screener table's column order and widths, set by dragging its
+         headings: JSON {order: [keys], widths: {key: grid units}}. Empty is
+         the default layout. -->
+    <entry name="screenerLayout" type="String">
+      <default></default>
+    </entry>
+    <!-- Per-screen sort set by clicking a heading: JSON {screen id: {key, asc}}. -->
+    <entry name="screenerSort" type="String">
+      <default></default>
+    </entry>
+    <!-- The Screener tab's tools row and legend: shown or folded away. -->
+    <entry name="screenerTools" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- The detail chart's style, for every range: candles, or a line. -->
+    <entry name="chartCandles" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="alertSound" type="Bool">
+      <label>Alert sounds on (the pop-up's mute button)</label>
+      <default>true</default>
+    </entry>
+    <!-- Each feed's sound, as a file path from ui/sounds.js; empty is none.
+         Two different bells by default, so the feed can be told by ear. -->
+    <!-- Legacy, 2026-10-22 only: where alerts were saved before they moved
+         to the LocalStorage database. Read once to carry that day's alerts
+         across, then emptied. -->
+    <entry name="alertLog" type="String">
+      <default></default>
+    </entry>
+    <entry name="runSound" type="String">
+      <default>/usr/share/sounds/freedesktop/stereo/bell.oga</default>
+    </entry>
+    <entry name="hodSound" type="String">
+      <default>/usr/share/sounds/ocean/stereo/bell-window-system.oga</default>
+    </entry>
+    <!-- Settings → Data: the scanner the bridge runs and what it is told.
+         Passed to it as environment variables (code/scanner/settings.py).
+         An empty scannerDir is the bundled code/scanner/ folder. -->
+    <entry name="scannerDir" type="String">
+      <default></default>
+    </entry>
+    <!-- The User-Agent SEC EDGAR requires: a name and a contact email.
+         Empty turns the dilution and long-term value features off. -->
+    <entry name="secContact" type="String">
+      <default></default>
+    </entry>
+    <!-- Earnings calendar: every reporter worth this much or more is listed,
+         plus tickers with a folder in researchDir and those in
+         earningsTickers (space- or comma-separated). -->
+    <entry name="earningsMinCap" type="Double">
+      <default>40000000000</default>
+    </entry>
+    <entry name="researchDir" type="String">
+      <default></default>
+    </entry>
+    <entry name="earningsTickers" type="String">
+      <default></default>
+    </entry>
+  </group>
+</kcfg>

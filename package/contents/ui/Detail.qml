@@ -30,6 +30,9 @@ import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
 import QtQuick.LocalStorage
 import "scorecards.js" as Scorecards
+import "themes.js" as Themes
+import "newsfeeds.js" as NewsFeeds
+import "screens.js" as Screens
 import org.kde.kirigami as Kirigami
 
 ColumnLayout {
@@ -55,18 +58,25 @@ ColumnLayout {
     // right goes back through the rest. Limits checked 2026-10-23: 1-minute
     // bars for 7 days, 5- to 30-minute for 60 days (1mo is the widest named
     // range inside that), hourly for 2 years.
+    //
+    // The named ranges fetch more history than they show (`fetch`), and open
+    // on their own span (`sessions` trading days, or `days` calendar days):
+    // a 200-bar EMA needs 200 bars behind the first one drawn, and 1D alone
+    // has about 79. Zooming out shows the extra.
+    // `tip` is the button's tooltip: 1M (a month) and 1m (one-minute bars)
+    // look alike on the buttons.
     readonly property var ranges: [
-        { key: "1D", range: "1d",  interval: "5m"  },
-        { key: "5D", range: "5d",  interval: "15m" },
-        { key: "1M", range: "1mo", interval: "60m" },
-        { key: "6M", range: "6mo", interval: "1d"  },
-        { key: "1Y", range: "1y",  interval: "1d"  },
-        { key: "5Y", range: "5y",  interval: "1wk" },
-        { key: "1m",  range: "7d",  interval: "1m",  intraday: true },
-        { key: "5m",  range: "1mo", interval: "5m",  intraday: true },
-        { key: "15m", range: "1mo", interval: "15m", intraday: true },
-        { key: "30m", range: "1mo", interval: "30m", intraday: true },
-        { key: "1h",  range: "1y",  interval: "60m", intraday: true }
+        { key: "1D", range: "1d",  interval: "5m",  fetch: "5d",  sessions: 1, tip: i18n("1 day, 5-minute bars") },
+        { key: "5D", range: "5d",  interval: "15m", fetch: "1mo", sessions: 5, tip: i18n("5 days, 15-minute bars") },
+        { key: "1M", range: "1mo", interval: "60m", fetch: "3mo", days: 30, tip: i18n("1 month, hourly bars") },
+        { key: "6M", range: "6mo", interval: "1d",  fetch: "2y",  days: 182, tip: i18n("6 months, daily bars") },
+        { key: "1Y", range: "1y",  interval: "1d",  fetch: "2y",  days: 365, tip: i18n("1 year, daily bars") },
+        { key: "5Y", range: "5y",  interval: "1wk", fetch: "10y", days: 1826, tip: i18n("5 years, weekly bars") },
+        { key: "1m",  range: "7d",  interval: "1m",  intraday: true, tip: i18n("1-minute bars, last 7 days") },
+        { key: "5m",  range: "1mo", interval: "5m",  intraday: true, tip: i18n("5-minute bars, last month") },
+        { key: "15m", range: "1mo", interval: "15m", intraday: true, tip: i18n("15-minute bars, last month") },
+        { key: "30m", range: "1mo", interval: "30m", intraday: true, tip: i18n("30-minute bars, last month") },
+        { key: "1h",  range: "1y",  interval: "60m", intraday: true, tip: i18n("Hourly bars, last year") }
     ]
     readonly property int bars: 90           // intraday bars on screen at first
     property int rangeIndex: 0
@@ -88,6 +98,38 @@ ColumnLayout {
     readonly property var lows: win(full.l)
     readonly property var vols: win(full.v)
     readonly property var vwap: win(full.w)  // NaN where there is no volume yet
+    // ── overlays ──
+    // EMAs over every bar fetched, so the line on screen is already settled.
+    // Each length has a fixed colour; its button is drawn in it, as a legend.
+    readonly property var emaLengths: [9, 20, 50, 200]
+    readonly property var emaColours: ({ 9: "#f2c94c", 20: "#2dd4bf", 50: "#a78bfa", 200: "#fb923c" })
+    readonly property var emasOn: String(Plasmoid.configuration.chartEmas || "").split(",")
+                                      .map(Number).filter(n => emaLengths.indexOf(n) >= 0)
+    function toggleEma(n) {
+        const on = emasOn.indexOf(n) >= 0 ? emasOn.filter(x => x !== n) : emasOn.concat([n])
+        Plasmoid.configuration.chartEmas = on.sort((a, b) => a - b).join(",")
+    }
+    readonly property var emas: {
+        const out = {}
+        for (const n of emasOn) out[n] = win(ema(full.c, n))
+        return out
+    }
+    // NaN until `n` bars exist, seeded with their simple average.
+    function ema(c, n) {
+        const out = new Array(c.length).fill(NaN)
+        if (c.length < n) return out
+        let e = 0
+        for (let i = 0; i < n; i++) e += c[i]
+        e /= n
+        out[n - 1] = e
+        const k = 2 / (n + 1)
+        for (let i = n; i < c.length; i++) { e = c[i] * k + e * (1 - k); out[i] = e }
+        return out
+    }
+    // VWAP wherever the bars are minutes or hours; it restarts each day.
+    readonly property bool minuteBars: /^\d+m$/.test(ranges[rangeIndex].interval)
+    readonly property bool showVwap: minuteBars && Plasmoid.configuration.chartVwap
+    readonly property bool showVolume: Plasmoid.configuration.chartVolume
     readonly property int minBars: 10
     // Zoom by `factor` (under 1 is in), keeping the bar at `at` (0-1 across
     // the chart) under the pointer.
@@ -143,24 +185,122 @@ ColumnLayout {
                     vo.push(vol); vw.push(vsum > 0 ? pv / vsum : NaN)
                 })
                 if (c.length < 2) throw "too few points"
-                // Intraday opens on the newest bars; the longer ranges whole.
-                const n = r.intraday ? Math.min(bars, c.length) : c.length
+                // Intraday opens on the newest bars; a named range on its
+                // own span, with the warm-up history before it off screen.
+                let n = c.length
+                if (r.intraday) n = Math.min(bars, c.length)
+                else if (r.sessions) {
+                    const off = (res.meta.gmtoffset || 0) * 1000
+                    const dayOf = ms => new Date(ms + off).toISOString().slice(0, 10)
+                    const keep = new Set()
+                    for (let i = t.length - 1; i >= 0 && keep.size <= r.sessions; i--) {
+                        keep.add(dayOf(t[i]))
+                        if (keep.size <= r.sessions) n = t.length - i
+                    }
+                } else if (r.days) {
+                    const from = t[t.length - 1] - r.days * 86400000
+                    n = t.filter(x => x >= from).length
+                }
+                n = Math.max(Math.min(minBars, c.length), n)
                 viewCount = n
                 viewFrom = c.length - n
                 full = { t: t, o: o, h: h, l: l, c: c, v: vo, w: vw }
             } catch (e) {
+                // A Coinbase pair Yahoo does not chart: Coinbase's own candles.
+                if (ticker.screener.isCryptoSymbol(entry.symbol)) { loadCoinbase(r); return }
                 failed = true
                 viewFrom = 0; viewCount = 0
                 full = { t: [], o: [], h: [], l: [], c: [], v: [], w: [] }
             }
         }
         x.open("GET", "https://query1.finance.yahoo.com/v8/finance/chart/"
-               + encodeURIComponent(entry.symbol) + "?range=" + r.range + "&interval=" + r.interval
+               + encodeURIComponent(entry.symbol) + "?range=" + (r.fetch || r.range) + "&interval=" + r.interval
                + (r.intraday ? "&includePrePost=true" : ""))
         x.setRequestHeader("User-Agent", "Mozilla/5.0")
         x.send()
     }
     onRangeIndexChanged: { autoScale = true; load() }
+
+    // ── Coinbase candles ──
+    // For crypto pairs Yahoo has no chart for. Coinbase's public candles
+    // come in six sizes (1, 5, 15, 60 minutes, 6 hours, a day), 300 to a
+    // request, newest first; `pages` requests go back far enough to settle a
+    // 200-bar EMA, `agg` joins bars for sizes Coinbase lacks (30 minutes,
+    // weekly), and `show` is how many open on screen. Crypto never closes, so
+    // a "day" is 24 hours and VWAP restarts at UTC midnight.
+    readonly property var coinbaseSpec: ({
+        "1D":  { g: 300,   pages: 2, show: 288 },
+        "5D":  { g: 900,   pages: 3, show: 480 },
+        "1M":  { g: 3600,  pages: 4, show: 720 },
+        "6M":  { g: 86400, pages: 2, show: 182 },
+        "1Y":  { g: 86400, pages: 2, show: 365 },
+        "5Y":  { g: 86400, pages: 7, show: 261, agg: 7 },
+        "1m":  { g: 60,    pages: 2 },
+        "5m":  { g: 300,   pages: 3 },
+        "15m": { g: 900,   pages: 2 },
+        "30m": { g: 900,   pages: 4, agg: 2 },
+        "1h":  { g: 3600,  pages: 2 }
+    })
+    function loadCoinbase(r) {
+        const spec = coinbaseSpec[r.key]
+        if (!spec) { failed = true; return }
+        const rows = []
+        loading = true
+        const page = (k, end) => {
+            const start = end - 300 * spec.g
+            const x = new XMLHttpRequest()
+            request = x
+            x.onreadystatechange = () => {
+                if (x.readyState !== XMLHttpRequest.DONE || request !== x) return
+                let got = null
+                try { got = JSON.parse(x.responseText) } catch (e) {}
+                if (Array.isArray(got)) for (const b of got) rows.push(b)
+                if (Array.isArray(got) && got.length && k + 1 < spec.pages) page(k + 1, start)
+                else { request = null; loading = false; finishCoinbase(rows, spec, r) }
+            }
+            x.open("GET", "https://api.exchange.coinbase.com/products/" + encodeURIComponent(entry.symbol)
+                   + "/candles?granularity=" + spec.g
+                   + "&start=" + new Date(start * 1000).toISOString() + "&end=" + new Date(end * 1000).toISOString())
+            x.setRequestHeader("User-Agent", "Mozilla/5.0")
+            x.send()
+        }
+        page(0, Math.floor(Date.now() / 1000))
+    }
+    // rows: [time s, low, high, open, close, volume], any order, may repeat.
+    function finishCoinbase(rows, spec, r) {
+        const seen = {}
+        let bars = rows.filter(b => !seen[b[0]] && (seen[b[0]] = true)).sort((a, b) => a[0] - b[0])
+        const agg = spec.agg || 1
+        if (agg > 1) {
+            const out = []
+            for (let i = bars.length % agg; i < bars.length; i += agg) {
+                const g = bars.slice(i, i + agg)
+                out.push([g[0][0], Math.min(...g.map(b => b[1])), Math.max(...g.map(b => b[2])),
+                          g[0][3], g[g.length - 1][4], g.reduce((s, b) => s + b[5], 0)])
+            }
+            bars = out
+        }
+        if (bars.length < 2) {
+            failed = true
+            viewFrom = 0; viewCount = 0
+            full = { t: [], o: [], h: [], l: [], c: [], v: [], w: [] }
+            return
+        }
+        const t = [], o = [], h = [], l = [], c = [], vo = [], vw = []
+        let day = "", pv = 0, vsum = 0
+        for (const b of bars) {
+            const d = new Date(b[0] * 1000).toISOString().slice(0, 10)
+            if (d !== day) { day = d; pv = 0; vsum = 0 }
+            pv += (b[1] + b[2] + b[4]) / 3 * b[5]
+            vsum += b[5]
+            t.push(b[0] * 1000); l.push(b[1]); h.push(b[2]); o.push(b[3]); c.push(b[4]); vo.push(b[5])
+            vw.push(vsum > 0 ? pv / vsum : NaN)
+        }
+        const n = Math.max(Math.min(minBars, c.length), Math.min(c.length, spec.show || bars))
+        viewCount = n
+        viewFrom = c.length - n
+        full = { t: t, o: o, h: h, l: l, c: c, v: vo, w: vw }
+    }
     // The price scale: fitted to the bars on screen until the user stretches or
     // moves it on the right edge, then held at `scaleLo`-`scaleHi`.
     property bool autoScale: true
@@ -258,7 +398,7 @@ ColumnLayout {
         if (!onWatchlist) ticker.fetch(entry.symbol)
         loadSummary()
     }
-    Component.onCompleted: { load(); refresh(); loadLevels(); if (f.type === "EQUITY") loadDilution() }
+    Component.onCompleted: { load(); refresh(); loadLevels(); if (f.type === "EQUITY") loadDilution(); loadAbout() }
     Timer {
         interval: detail.ticker.pollSeconds * 1000
         running: true
@@ -272,13 +412,13 @@ ColumnLayout {
     // screener may already hold it; otherwise it is asked for once.
     property var dil: null
     readonly property string kind: f.type || ""
-    onKindChanged: if (kind === "EQUITY" && !dil) loadDilution()
+    onKindChanged: { if (kind === "EQUITY" && !dil) loadDilution(); loadAbout() }
     function loadDilution() {
         const sym = entry.symbol
         const known = ticker.screener.info[sym]
         if (known && known.dilution) { dil = known.dilution; return }
         if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym)) return
-        ticker.screener.bridgeRun("dilution " + sym, out => { if (out && out[sym]) dil = out[sym] })
+        ticker.screener.bridgeRun(["dilution", sym], out => { if (out && out[sym]) dil = out[sym] }, 60, true)
     }
 
     property int tab: 0
@@ -292,12 +432,20 @@ ColumnLayout {
     property var summary: null
     property bool summaryFailed: false
     property bool summaryRetried: false
+    // Yahoo's company profile (assetProfile): empty for an index, currency or crypto pair.
+    // A coin's description comes from CoinGecko, looked up once per coin.
+    property string cryptoText: ""
+    readonly property string aboutText: (summary && summary.assetProfile
+                                         ? String(summary.assetProfile.longBusinessSummary || "") : "") || cryptoText
+    function loadAbout() {
+        if (kind === "CRYPTOCURRENCY") ticker.screener.cryptoAbout(entry.symbol, t => cryptoText = t)
+    }
 
     function loadSummary() {
         ticker.withCrumb(c => {
             ticker.yget("https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
                         + encodeURIComponent(entry.symbol)
-                        + "?modules=summaryDetail,defaultKeyStatistics,financialData,calendarEvents"
+                        + "?modules=summaryDetail,defaultKeyStatistics,financialData,calendarEvents,assetProfile"
                         + "&crumb=" + encodeURIComponent(c), x => {
                 if (x.status === 401 && !summaryRetried) {
                     // Crumb expired: fetch a fresh one, once.
@@ -415,7 +563,7 @@ ColumnLayout {
         const scanner = (kind === "EQUITY" || kind === "ETF")
                         && /^[A-Za-z0-9.\-]{1,12}$/.test(entry.symbol)
         if (!scanner) { loadGoogleNews(); return }
-        ticker.screener.bridgeRun("tickernews " + entry.symbol, out => {
+        ticker.screener.bridgeRun(["tickernews", entry.symbol], out => {
             let rows = (Array.isArray(out) ? out : []).filter(n => n.title && n.link)
             // The scanner flags whether each headline is about the company.
             // For a big name the rest is mostly other companies' coverage
@@ -424,11 +572,17 @@ ColumnLayout {
             const own = rows.filter(n => n.company)
             if (own.length >= 5) rows = own
             if (rows.length === 0) { detail.loadGoogleNews(); return }
-            detail.news = rows.slice(0, 20)
+            detail.news = detail.withMine(rows).slice(0, 20)
             detail.newsSource = "Finviz"
             detail.newsLoading = false
             detail.newsFailed = false
-        }, 30)
+        }, 30, true)
+    }
+    // Settings → Data: "en-US", "de-DE", "en-GB"...
+    function googleEdition() {
+        const loc = String(Plasmoid.configuration.newsLocale || "en-US").trim()
+        const lang = loc.split("-")[0] || "en", country = (loc.split("-")[1] || "US").toUpperCase()
+        return "&hl=" + encodeURIComponent(loc) + "&gl=" + country + "&ceid=" + country + ":" + lang
     }
     function newsQuery() {
         const name = String(m.longName || m.shortName || entry.name || entry.symbol)
@@ -452,7 +606,7 @@ ColumnLayout {
         newsFailed = false
         ticker.yget("https://news.google.com/rss/search?q="
                     + encodeURIComponent(newsQuery() + " when:7d")
-                    + "&hl=en-US&gl=US&ceid=US:en", x => {
+                    + googleEdition(), x => {
             newsLoading = false
             const items = String(x.responseText || "").split("<item>").slice(1).map(it => {
                 const get = tag => { const r = it.match(new RegExp("<" + tag + "[^>]*>([\\s\\S]*?)</" + tag + ">")); return r ? decode(r[1]).trim() : "" }
@@ -463,16 +617,31 @@ ColumnLayout {
                 return { title: title, link: get("link"), source: source, time: Date.parse(get("pubDate")) }
             }).filter(n => n.title && n.link && !isNaN(n.time))
             items.sort((a, b) => b.time - a.time)
-            news = items.slice(0, 20)
+            news = withMine(items).slice(0, 20)
             newsSource = "Google News"
             newsFailed = news.length === 0
         })
+    }
+    // Your own news sources' headlines naming this symbol, merged in by time.
+    function withMine(rows) {
+        const mine = ticker.screener.customNews.filter(it => NewsFeeds.matches(it, entry.symbol))
+            .map(it => ({ title: it.title, link: it.url, source: it.source, time: it.time, company: true }))
+        if (!mine.length) return rows
+        const seen = {}
+        return mine.concat(rows).sort((a, b) => b.time - a.time)
+            .filter(n => { const k = n.title.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60); return !seen[k] && (seen[k] = true) })
     }
     function ago(ms) {
         const mins = Math.round((Date.now() - ms) / 60000)
         if (mins < 60) return i18n("%1m ago", Math.max(1, mins))
         if (mins < 60 * 24) return i18n("%1h ago", Math.round(mins / 60))
         return i18n("%1d ago", Math.round(mins / 1440))
+    }
+    // A source's colour, the same as the News tab's, for its initial.
+    function sourceColor(name) {
+        let h = 0
+        for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) % 360
+        return Qt.hsla(h / 360, 0.45, 0.45, 1)
     }
 
     // Over one day the line is measured against yesterday's close, as on
@@ -507,22 +676,90 @@ ColumnLayout {
         PlasmaComponents3.ToolButton {
             icon.name: "go-previous"
             onClicked: detail.back()
-            PlasmaComponents3.ToolTip { text: i18n("Back to the watchlist") }
+            PlasmaComponents3.ToolTip { text: i18n("Back") }
         }
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
-            PlasmaExtras.Heading {
+            RowLayout {
                 Layout.fillWidth: true
-                level: 3
-                text: (detail.entry.label || detail.entry.symbol)
-                      + "  <font size='-1' color='" + detail.ticker.hex(Kirigami.Theme.disabledTextColor) + "'>"
-                      + detail.entry.symbol + "</font>"
-                textFormat: Text.StyledText
-                elide: Text.ElideRight
+                spacing: Kirigami.Units.smallSpacing
+                PlasmaExtras.Heading {
+                    Layout.fillWidth: !themeTag.visible && !sectorTag.visible
+                    Layout.maximumWidth: implicitWidth
+                    Layout.minimumWidth: 0
+                    level: 3
+                    // Styled text: the label and symbol are escaped, so markup
+                    // in either shows as typed rather than rendering.
+                    text: detail.ticker.esc(detail.entry.label || detail.entry.symbol)
+                          + "  <font size='-1' color='" + detail.ticker.hex(Kirigami.Theme.disabledTextColor) + "'>"
+                          + detail.ticker.esc(detail.entry.symbol) + "</font>"
+                    textFormat: Text.StyledText
+                    elide: Text.ElideRight
+                }
+                // The theme, as on the screener: the glyph coloured by how hot
+                // the story is, and its name and state in words. Only for
+                // symbols the screener has looked up (it needs the industry).
+                RowLayout {
+                    id: themeTag
+                    readonly property var tf: detail.ticker.screener.themeFields(detail.entry.symbol)
+                    readonly property string st: tf.themeHeat ? tf.themeHeat.status : "quiet"
+                    readonly property color col: Themes.colour(st, (tf.theme && tf.theme.ramp) || Plasmoid.configuration.themeRamp)
+                    visible: !!tf.theme
+                    spacing: 2
+                    ThemeGlyph {
+                        theme: themeTag.tf.theme || null
+                        status: themeTag.st
+                        ramp: Plasmoid.configuration.themeRamp
+                        icons: { try { return JSON.parse(Plasmoid.configuration.themeIcons || "{}") } catch (e) { return ({}) } }
+                    }
+                    PlasmaComponents3.Label {
+                        text: themeTag.tf.theme ? themeTag.tf.theme.name + " · " + themeTag.st + " · " + i18n("beta") : ""
+                        font: Kirigami.Theme.smallFont
+                        color: themeTag.st === "quiet" ? Kirigami.Theme.disabledTextColor : themeTag.col
+                    }
+                    HoverHandler { id: themeHover }
+                    PlasmaComponents3.ToolTip {
+                        visible: themeHover.hovered
+                        textFormat: Text.PlainText
+                        text: themeTag.tf.theme && themeTag.tf.themeHeat
+                              ? Themes.explain(themeTag.tf.theme.name, themeTag.tf.themeHeat, detail.ticker.screener.themeTune) : ""
+                    }
+                }
+                // The sector, heat-coloured the same way, with today's industry mix.
+                RowLayout {
+                    id: sectorTag
+                    readonly property var sf: detail.ticker.screener.sectorFields(detail.entry.symbol)
+                    readonly property string st: sf.sectorHeat ? sf.sectorHeat.status : "quiet"
+                    readonly property color col: Themes.colour(st, (sf.sector && sf.sector.ramp) || Plasmoid.configuration.themeRamp)
+                    visible: !!sf.sector
+                    spacing: 2
+                    ThemeGlyph {
+                        theme: sectorTag.sf.sector || null
+                        status: sectorTag.st
+                        ramp: Plasmoid.configuration.themeRamp
+                        icons: { try { return JSON.parse(Plasmoid.configuration.themeIcons || "{}") } catch (e) { return ({}) } }
+                    }
+                    PlasmaComponents3.Label {
+                        text: sectorTag.sf.sector ? sectorTag.sf.sector.name + " · " + sectorTag.st : ""
+                        font: Kirigami.Theme.smallFont
+                        color: sectorTag.st === "quiet" ? Kirigami.Theme.disabledTextColor : sectorTag.col
+                    }
+                    HoverHandler { id: sectorHover }
+                    PlasmaComponents3.ToolTip {
+                        visible: sectorHover.hovered
+                        textFormat: Text.PlainText
+                        text: sectorTag.sf.sector && sectorTag.sf.sectorHeat
+                              ? Themes.explain(sectorTag.sf.sector.name, sectorTag.sf.sectorHeat, detail.ticker.screener.themeTune)
+                                + (sectorTag.sf.sectorBreakdown ? "\n" + i18n("Today: %1", sectorTag.sf.sectorBreakdown) : "")
+                              : ""
+                    }
+                }
+                Item { Layout.fillWidth: true; visible: themeTag.visible || sectorTag.visible }
             }
             PlasmaComponents3.Label {
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: [detail.m.longName || detail.entry.name, detail.m.fullExchangeName, detail.m.currency]
                       .filter(x => x).join(" · ")
                 font: Kirigami.Theme.smallFont
@@ -537,7 +774,7 @@ ColumnLayout {
             icon.name: "list-add"
             text: i18n("Watchlist")
             onClicked: {
-                const list = detail.ticker.symbols.slice()
+                const list = detail.ticker.allSymbols.slice()     // keeps the Themes entry
                 list.push({ symbol: detail.entry.symbol, label: detail.entry.symbol.replace(/^\^/, ""),
                             name: detail.m.shortName || detail.m.longName || detail.entry.name || detail.entry.symbol,
                             star: false })
@@ -545,19 +782,19 @@ ColumnLayout {
             }
             PlasmaComponents3.ToolTip { text: i18n("Add to the watchlist") }
         }
-        // For a stock: its SEC EDGAR filings, newest first -- shelf
-        // registrations (S-3), offering prospectuses (424B) and the rest. EDGAR
-        // resolves a ticker in the CIK field (checked 2026-10-22). Anything
-        // without an SEC filer -- index, crypto, currency -- opens on Yahoo.
+        // For a stock: its filings on BamSEC -- shelf registrations (S-3),
+        // offering prospectuses (424B) and the rest. A ticker search opens
+        // straight on the company when the ticker is unique, else on the list
+        // of matches. Anything else -- index, currency, crypto -- opens on
+        // Yahoo's quote page (Yahoo lists coins such as XMR-USD that Coinbase does not).
         PlasmaComponents3.ToolButton {
             readonly property bool sec: detail.kind === "EQUITY"
             icon.name: "internet-web-browser"
             onClicked: Qt.openUrlExternally(sec
-                ? "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK="
-                  + encodeURIComponent(detail.entry.symbol) + "&type=&dateb=&owner=include&count=40"
+                ? "https://www.bamsec.com/search?q=" + encodeURIComponent(detail.entry.symbol)
                 : "https://finance.yahoo.com/quote/" + encodeURIComponent(detail.entry.symbol))
             PlasmaComponents3.ToolTip {
-                text: parent.sec ? i18n("SEC filings (EDGAR): S-3 shelves, 424B offerings and the rest")
+                text: parent.sec ? i18n("BamSEC filings: S-3 shelves, 424B offerings and the rest")
                                  : i18n("Open on Yahoo Finance")
             }
         }
@@ -573,6 +810,18 @@ ColumnLayout {
             font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.8
             font.bold: true
             font.family: Kirigami.Theme.fixedWidthFont.family
+        }
+        // Opened from a screen in another currency: the price in it too.
+        PlasmaComponents3.Label {
+            readonly property string cur: detail.entry.currency || "USD"
+            readonly property real k: cur === "USD" ? NaN : detail.ticker.screener.rate(cur)
+            readonly property var def: Screens.currencies.find(c => c.key === cur) || null
+            visible: detail.known && isFinite(k) && !!def && (detail.f.currency || "USD") === "USD"
+            text: visible ? "≈ " + def.sym + (detail.f.value * k >= 1 ? (detail.f.value * k).toFixed(2)
+                                                 : (detail.f.value * k).toPrecision(4)) : ""
+            font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.2
+            font.family: Kirigami.Theme.fixedWidthFont.family
+            opacity: 0.8
         }
         PlasmaComponents3.Label {
             visible: detail.known
@@ -615,19 +864,20 @@ ColumnLayout {
         text: {
             if (!visible) return ""
             const sh = (d.shelves || [])[0], of = (d.offerings || [])[0]
-            const parts = [i18n("Dilution") + " <b><font color='" + detail.ticker.hex(riskColour) + "'>" + d.risk + "</font></b>"]
-            parts.push(sh ? i18n("%1 filed %2", sh.form, sh.date) : i18n("no shelf in 12 months"))
-            if (of) parts.push(i18n("last offering %1 %2", of.form, of.date)
+            // Styled text: the scanner's words are escaped before going in.
+            const e = t => detail.ticker.esc(t)
+            const parts = [i18n("Dilution") + " <b><font color='" + detail.ticker.hex(riskColour) + "'>" + e(d.risk) + "</font></b>"]
+            parts.push(sh ? e(i18n("%1 filed %2", sh.form, sh.date)) : i18n("no shelf in 12 months"))
+            if (of) parts.push(e(i18n("last offering %1 %2", of.form, of.date))
                                + (d.daysSinceOffering !== null && d.daysSinceOffering !== undefined
-                                  ? " " + i18n("(%1 days ago)", d.daysSinceOffering) : ""))
-            const extra = (d.flags || []).filter(f => !f.startsWith("live shelf") && !f.startsWith("sold stock"))
+                                  ? " " + e(i18n("(%1 days ago)", d.daysSinceOffering)) : ""))
+            const extra = (d.flags || []).filter(f => !f.startsWith("live shelf") && !f.startsWith("sold stock")).map(e)
             return parts.concat(extra).join(" · ")
         }
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: Qt.openUrlExternally("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK="
-                                            + encodeURIComponent(detail.entry.symbol) + "&type=&dateb=&owner=include&count=40")
+            onClicked: Qt.openUrlExternally("https://www.bamsec.com/search?q=" + encodeURIComponent(detail.entry.symbol))
         }
     }
 
@@ -638,6 +888,29 @@ ColumnLayout {
         onCurrentIndexChanged: detail.tab = currentIndex
         PlasmaComponents3.TabButton { text: i18n("Overview") }
         PlasmaComponents3.TabButton { text: i18n("News") }
+    }
+
+    // ── about the company ───────────────────────────────────────────────
+    // Yahoo's business summary: two lines, a click shows the rest.
+    PlasmaComponents3.Label {
+        id: about
+        visible: detail.tab === 0 && detail.aboutText.length > 0
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+        Layout.rightMargin: Kirigami.Units.largeSpacing
+        textFormat: Text.PlainText
+        text: detail.aboutText
+        wrapMode: Text.WordWrap
+        font: Kirigami.Theme.smallFont
+        opacity: 0.8
+        elide: Text.ElideRight
+        maximumLineCount: expanded ? 999 : 2
+        property bool expanded: false
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: about.expanded = !about.expanded
+        }
     }
 
     // ── range buttons ───────────────────────────────────────────────────
@@ -655,6 +928,7 @@ ColumnLayout {
                 checkable: true
                 checked: detail.rangeIndex === index
                 onClicked: detail.rangeIndex = index
+                PlasmaComponents3.ToolTip { text: parent.modelData.tip }
             }
         }
     }
@@ -668,13 +942,15 @@ ColumnLayout {
             checkable: true
             checked: detail.candles
             onClicked: Plasmoid.configuration.chartCandles = !detail.candles
+            PlasmaComponents3.ToolTip { text: i18n("Candlesticks; off draws a line chart") }
         }
         PlasmaComponents3.ToolButton {
-            text: detail.pending ? i18n("Click the other end") : i18n("Line")
+            text: detail.pending ? i18n("Click the other end") : i18n("Draw line")
             icon.name: "draw-line"
             checkable: true
             checked: detail.drawing
             onClicked: detail.drawing = !detail.drawing
+            PlasmaComponents3.ToolTip { text: i18n("Draw a trend line: click two points. Double-click the chart to add a price level; right-click removes the nearest level or line.") }
         }
         Kirigami.Separator { Layout.fillHeight: true }
         Repeater {
@@ -687,7 +963,54 @@ ColumnLayout {
                 checkable: true
                 checked: detail.rangeIndex === index
                 onClicked: detail.rangeIndex = index
+                PlasmaComponents3.ToolTip { text: parent.modelData.tip }
             }
+        }
+    }
+
+    // Overlays: EMAs in their line colours, VWAP and volume. Remembered for
+    // every chart.
+    RowLayout {
+        visible: detail.tab === 0
+        Layout.alignment: Qt.AlignHCenter
+        spacing: 0
+        PlasmaComponents3.Label { text: i18n("EMA"); opacity: 0.7; font: Kirigami.Theme.smallFont }
+        Repeater {
+            model: detail.emaLengths
+            PlasmaComponents3.ToolButton {
+                required property int modelData
+                readonly property bool on: detail.emasOn.indexOf(modelData) >= 0
+                checkable: true
+                checked: on
+                onClicked: detail.toggleEma(modelData)
+                contentItem: PlasmaComponents3.Label {
+                    text: parent.modelData
+                    color: parent.on ? detail.emaColours[parent.modelData] : Kirigami.Theme.disabledTextColor
+                    font.bold: parent.on
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                PlasmaComponents3.ToolTip {
+                    text: detail.fullCount < modelData
+                        ? i18n("%1-bar EMA: this range has only %2 bars", modelData, detail.fullCount)
+                        : i18n("%1-bar exponential moving average", modelData)
+                }
+            }
+        }
+        Kirigami.Separator { Layout.fillHeight: true }
+        PlasmaComponents3.ToolButton {
+            text: i18n("VWAP")
+            checkable: true
+            checked: Plasmoid.configuration.chartVwap
+            enabled: detail.minuteBars
+            onClicked: Plasmoid.configuration.chartVwap = !Plasmoid.configuration.chartVwap
+            PlasmaComponents3.ToolTip { text: detail.minuteBars ? i18n("Volume-weighted average price, from each day's first traded bar") : i18n("VWAP needs minute or hour bars") }
+        }
+        PlasmaComponents3.ToolButton {
+            text: i18n("Volume")
+            checkable: true
+            checked: Plasmoid.configuration.chartVolume
+            onClicked: Plasmoid.configuration.chartVolume = !Plasmoid.configuration.chartVolume
+            PlasmaComponents3.ToolTip { text: i18n("Show volume bars under the chart") }
         }
     }
 
@@ -705,7 +1028,7 @@ ColumnLayout {
             readonly property real plotBottom: height - Kirigami.Units.gridUnit * 1.2
             readonly property real plotTop: Kirigami.Units.smallSpacing
             readonly property var p: detail.closes
-            readonly property bool hasVol: detail.vols.some(v => v > 0)
+            readonly property bool hasVol: detail.showVolume && detail.vols.some(v => v > 0)
             // The bottom fifth of the plot is the volume strip, when there is
             // volume to show.
             readonly property real priceBottom: hasVol ? plotTop + (plotBottom - plotTop) * 0.8 : plotBottom
@@ -750,6 +1073,9 @@ ColumnLayout {
                 function onScaleLoChanged() { chart.requestPaint() }
                 function onScaleHiChanged() { chart.requestPaint() }
                 function onCandlesChanged() { chart.requestPaint() }
+                function onEmasChanged() { chart.requestPaint() }
+                function onShowVwapChanged() { chart.requestPaint() }
+                function onShowVolumeChanged() { chart.requestPaint() }
             }
 
             onPaint: {
@@ -770,6 +1096,19 @@ ColumnLayout {
                     ctx.beginPath(); ctx.moveTo(0, yg); ctx.lineTo(plotRight, yg); ctx.stroke()
                 }
                 ctx.globalAlpha = 1
+                // Volume, below the price area -- before the clip, which would
+                // otherwise cut it away.
+                const w = Math.max(1, Math.min(slot * 0.7, Kirigami.Units.gridUnit))
+                if (hasVol) {
+                    const vmax = Math.max(...detail.vols) || 1
+                    for (let i = 0; i < p.length; i++) {
+                        const hv = (plotBottom - priceBottom - 2) * detail.vols[i] / vmax
+                        ctx.fillStyle = detail.closes[i] >= detail.opens[i] ? up : down
+                        ctx.globalAlpha = 0.45
+                        ctx.fillRect(px(i) - w / 2, plotBottom - hv, w, hv)
+                    }
+                    ctx.globalAlpha = 1
+                }
                 // Everything priced is kept inside the price area, so a
                 // stretched scale does not draw over the volume or the labels.
                 ctx.save()
@@ -795,18 +1134,6 @@ ColumnLayout {
                     ctx.lineTo(plotRight, yb)
                     ctx.stroke()
                     ctx.setLineDash([])
-                }
-
-                const w = Math.max(1, Math.min(slot * 0.7, Kirigami.Units.gridUnit))
-                if (hasVol) {
-                    const vmax = Math.max(...detail.vols) || 1
-                    for (let i = 0; i < p.length; i++) {
-                        const hv = (plotBottom - priceBottom - 2) * detail.vols[i] / vmax
-                        ctx.fillStyle = detail.closes[i] >= detail.opens[i] ? up : down
-                        ctx.globalAlpha = 0.45
-                        ctx.fillRect(px(i) - w / 2, plotBottom - hv, w, hv)
-                    }
-                    ctx.globalAlpha = 1
                 }
 
                 if (detail.candles) {
@@ -842,8 +1169,24 @@ ColumnLayout {
                     ctx.stroke()
                 }
 
-                // VWAP, intraday, where there has been volume to weight it.
-                if (detail.intraday) {
+                // EMAs, over the bars.
+                ctx.lineWidth = 1.25
+                for (const n of detail.emasOn) {
+                    const e = detail.emas[n] || []
+                    ctx.strokeStyle = detail.emaColours[n]
+                    ctx.beginPath()
+                    let pen = false
+                    for (let i = 0; i < e.length; i++) {
+                        if (!(e[i] > 0)) { pen = false; continue }
+                        if (pen) ctx.lineTo(px(i), py(e[i])); else ctx.moveTo(px(i), py(e[i]))
+                        pen = true
+                    }
+                    ctx.stroke()
+                }
+
+                // VWAP, on minute and hour bars, where there has been volume
+                // to weight it.
+                if (detail.showVwap) {
                     ctx.strokeStyle = detail.ticker.hex(Kirigami.Theme.highlightColor)
                     ctx.lineWidth = 1.25
                     ctx.beginPath()
@@ -1165,18 +1508,27 @@ ColumnLayout {
                     font.bold: true
                     Layout.preferredWidth: Kirigami.Units.gridUnit
                 }
+                // The name gives way first; the value and target keep their
+                // width, so a long target never runs into the value.
                 PlasmaComponents3.Label {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 3
+                    textFormat: Text.PlainText
                     text: Scorecards.measure(ruleRow.modelData.measure).name
                     elide: Text.ElideRight
                 }
                 PlasmaComponents3.Label {
+                    Layout.minimumWidth: implicitWidth
+                    textFormat: Text.PlainText
                     text: Scorecards.valueText(ruleRow.modelData, detail.cardRow)
                     font.family: Kirigami.Theme.fixedWidthFont.family
                 }
                 PlasmaComponents3.Label {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                    Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 5, implicitWidth)
+                    Layout.minimumWidth: Math.max(Kirigami.Units.gridUnit * 5, implicitWidth)
+                    Layout.leftMargin: Kirigami.Units.smallSpacing
                     horizontalAlignment: Text.AlignRight
+                    textFormat: Text.PlainText
                     text: i18n("target %1", Scorecards.targetText(ruleRow.modelData))
                     font: Kirigami.Theme.smallFont
                     opacity: 0.6
@@ -1199,7 +1551,10 @@ ColumnLayout {
     // companies in a long-term value list; otherwise worked out on request.
     // Hidden when the screen's own scorecard is showing, so a quote opened
     // from a screen shows that screen's card and no other.
-    readonly property var value: ticker.screener.valueData[entry.symbol] || localValue
+    readonly property var value: {
+        const v = ticker.screener.valueData[entry.symbol]
+        return v && !v.failed ? v : localValue
+    }
     property var localValue: null
     property bool valueLoading: false
     function checkValue() {
@@ -1207,10 +1562,10 @@ ColumnLayout {
         const price = q ? q.price : f.value
         if (!(price > 0) || !/^[A-Z][A-Z0-9.\-]{0,9}$/.test(entry.symbol)) return
         valueLoading = true
-        ticker.screener.bridgeRun("value " + entry.symbol + ":" + price + ":" + (q && q.shares > 0 ? q.shares : ""), out => {
+        ticker.screener.bridgeRun(["value", entry.symbol + ":" + price + ":" + (q && q.shares > 0 ? q.shares : "")], out => {
             valueLoading = false
             if (out && out[entry.symbol]) localValue = out[entry.symbol]
-        }, 120)
+        }, 120, true)
     }
     ColumnLayout {
         visible: detail.tab === 0 && detail.kind === "EQUITY" && !detail.cardShown
@@ -1234,6 +1589,7 @@ ColumnLayout {
                 icon.name: "view-refresh"
                 text: detail.valueLoading ? i18n("Checking filings…") : i18n("Check")
                 onClicked: detail.checkValue()
+                PlasmaComponents3.ToolTip { text: i18n("Look up this company's SEC filings now") }
             }
         }
         Repeater {
@@ -1249,18 +1605,26 @@ ColumnLayout {
                     font.bold: true
                     Layout.preferredWidth: Kirigami.Units.gridUnit
                 }
+                // As above: the name gives way, value and target do not overlap.
                 PlasmaComponents3.Label {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: Kirigami.Units.gridUnit * 3
+                    textFormat: Text.PlainText
                     text: modelData.name
                     elide: Text.ElideRight
                 }
                 PlasmaComponents3.Label {
+                    Layout.minimumWidth: implicitWidth
+                    textFormat: Text.PlainText
                     text: modelData.value
                     font.family: Kirigami.Theme.fixedWidthFont.family
                 }
                 PlasmaComponents3.Label {
-                    Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                    Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 5, implicitWidth)
+                    Layout.minimumWidth: Math.max(Kirigami.Units.gridUnit * 5, implicitWidth)
+                    Layout.leftMargin: Kirigami.Units.smallSpacing
                     horizontalAlignment: Text.AlignRight
+                    textFormat: Text.PlainText
                     text: i18n("target %1", modelData.target)
                     font: Kirigami.Theme.smallFont
                     opacity: 0.6
@@ -1307,12 +1671,14 @@ ColumnLayout {
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
                         PlasmaComponents3.Label {
+                            textFormat: Text.PlainText
                             text: modelData[0]
                             opacity: 0.7
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
                         PlasmaComponents3.Label {
+                            textFormat: Text.PlainText
                             text: modelData[1]
                             font.family: Kirigami.Theme.fixedWidthFont.family
                             horizontalAlignment: Text.AlignRight
@@ -1335,24 +1701,76 @@ ColumnLayout {
     Repeater {
         model: detail.tab === 1 ? detail.news : []
         delegate: PlasmaComponents3.ItemDelegate {
+            id: card
             required property var modelData
             Layout.fillWidth: true
+            // The same card as the News tab: picture (or source initial), headline, source and age.
+            readonly property string picture: modelData.image || detail.ticker.screener.articleImages[modelData.link] || ""
             // Feed links are only opened as web pages, never another scheme.
             onClicked: if (/^https?:\/\//i.test(modelData.link)) Qt.openUrlExternally(modelData.link)
-            contentItem: ColumnLayout {
-                spacing: 0
-                PlasmaComponents3.Label {
-                    Layout.fillWidth: true
-                    text: modelData.title
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
+            Component.onCompleted: if (Plasmoid.configuration.newsImages && !modelData.image && modelData.link) detail.ticker.screener.wantImage(modelData.link)
+
+            contentItem: RowLayout {
+                spacing: Kirigami.Units.largeSpacing
+
+                Item {
+                    visible: Plasmoid.configuration.newsImages
+                    Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 4.5
+                    Layout.preferredHeight: Kirigami.Units.gridUnit * 3
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Kirigami.Units.cornerRadius
+                        visible: img.status !== Image.Ready
+                        color: detail.sourceColor(card.modelData.source)
+                        opacity: 0.35
+                    }
+                    PlasmaComponents3.Label {
+                        anchors.centerIn: parent
+                        visible: img.status !== Image.Ready
+                        textFormat: Text.PlainText
+                        text: String(card.modelData.source || "?").charAt(0).toUpperCase()
+                        font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.6
+                        font.bold: true
+                        opacity: 0.8
+                    }
+                    // A plain clipped Image, as on the News tab.
+                    Item {
+                        anchors.fill: parent
+                        clip: true
+                        Image {
+                            id: img
+                            anchors.fill: parent
+                            source: card.picture
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            sourceSize.width: Kirigami.Units.gridUnit * 9
+                            visible: status === Image.Ready
+                        }
+                    }
                 }
-                PlasmaComponents3.Label {
+
+                ColumnLayout {
                     Layout.fillWidth: true
-                    text: modelData.source + " · " + detail.ago(modelData.time)
-                    font: Kirigami.Theme.smallFont
-                    opacity: 0.7
+                    Layout.alignment: Qt.AlignTop
+                    spacing: Kirigami.Units.smallSpacing / 2
+                    PlasmaComponents3.Label {
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                        text: card.modelData.title
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 3
+                        elide: Text.ElideRight
+                        font.weight: Font.DemiBold
+                    }
+                    PlasmaComponents3.Label {
+                        Layout.fillWidth: true
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.7
+                        elide: Text.ElideRight
+                        textFormat: Text.PlainText
+                        text: card.modelData.source + " · " + detail.ago(card.modelData.time)
+                    }
                 }
             }
         }

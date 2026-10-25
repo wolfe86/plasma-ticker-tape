@@ -7,30 +7,78 @@
 //
 // The whole list is stored as one JSON string (cfg_symbols); the ListModel
 // here is the editable copy and is written back on every change.
+//
+// Saving follows the pattern described at the top of configScreener.qml: on
+// Apply, a list this page did not change is re-read from the live
+// configuration, and a symbol the detail card's "+ Watchlist" added while
+// the page was open is kept alongside this page's edits.
 
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import org.kde.kcmutils as KCM
+import org.kde.plasma.plasmoid
 
 KCM.SimpleKCM {
     id: page
 
     property string cfg_symbols
-    property string cfg_symbolsDefault
 
     ListModel { id: watch }
 
     // Load once, then the model leads and the string follows.
     property bool loaded: false
-    Component.onCompleted: {
+    function fill() {
         let list = []
         try { list = JSON.parse(cfg_symbols) } catch (e) {}
-        for (const s of list)
-            watch.append({ symbol: s.symbol, label: s.label || s.symbol,
-                           name: s.name || "", star: !!s.star })
+        watch.clear()
+        for (const s of (Array.isArray(list) ? list : []))
+            if (s && s.symbol)
+                watch.append({ symbol: s.symbol, label: s.label || s.symbol,
+                               name: s.name || "", star: !!s.star })
+    }
+    Component.onCompleted: {
+        fill()
         loaded = true
+        snapshot()
+    }
+
+    // ── saving without undoing the pop-up (configScreener.qml explains) ──
+    property var opened: ({})
+    function liveConfig() {
+        try { return Plasmoid.configuration || null } catch (e) { return null }
+    }
+    function snapshot() {
+        const c = liveConfig()
+        if (!c) return
+        const o = {}
+        for (const k of c.keys()) if (("cfg_" + k) in page) o[k] = page["cfg_" + k]
+        opened = o
+    }
+    function saveConfig() {
+        const c = liveConfig()
+        if (!c) return
+        const before = cfg_symbols
+        for (const k of c.keys()) {
+            const p = "cfg_" + k
+            if (!(p in page) || !(k in opened)) continue
+            if (page[p] === opened[k]) page[p] = c[k]
+            else if (k === "symbols") page[p] = mergeSymbols(opened[k], page[p], c[k])
+        }
+        if (cfg_symbols !== before) fill()
+        snapshot()
+    }
+    // This page's list, plus any symbol added elsewhere while it was open.
+    function mergeSymbols(base, mine, theirs) {
+        let b, m, t
+        try {
+            b = JSON.parse(base || "[]"); m = JSON.parse(mine || "[]"); t = JSON.parse(theirs || "[]")
+        } catch (e) { return mine }
+        if (!Array.isArray(m) || !Array.isArray(t)) return mine
+        if (!Array.isArray(b)) b = []
+        const has = (l, sym) => l.some(s => s && s.symbol === sym)
+        return JSON.stringify(m.concat(t.filter(s => s && !has(b, s.symbol) && !has(m, s.symbol))))
     }
     function save() {
         if (!loaded) return
@@ -106,6 +154,21 @@ KCM.SimpleKCM {
     ColumnLayout {
         spacing: Kirigami.Units.largeSpacing
 
+        // The tape's Themes entry: not a ticker but a slot that fills with
+        // the tickers of the themes running hot on the screener (Settings →
+        // Tape sets which and how many). Star it and drag it like any symbol.
+        QQC2.Button {
+            visible: !page.has("@themes")
+            icon.name: "list-add"
+            text: i18n("Add the Themes entry (beta): hot-theme tickers from the screener")
+            onClicked: {
+                watch.append({ symbol: "@themes", label: i18n("Themes"), name: i18n("Tickers on the themes running hot on the screener"), star: true })
+                page.save()
+            }
+            QQC2.ToolTip.text: i18n("Adds a slot to the tape that fills with tickers from themes running hot on your screener. Tune it under Settings → Tape.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+        }
         Kirigami.SearchField {
             id: search
             Layout.fillWidth: true
@@ -113,6 +176,9 @@ KCM.SimpleKCM {
             onTextChanged: debounce.restart()
             // Enter adds the top result.
             onAccepted: if (page.results.length > 0) page.add(page.results[0])
+            QQC2.ToolTip.text: i18n("Search Yahoo for a ticker, index, crypto or currency (Enter adds the top match)")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
         }
 
         // Search results; hidden while the field is empty.
@@ -129,30 +195,41 @@ KCM.SimpleKCM {
             Repeater {
                 model: page.results
                 delegate: QQC2.ItemDelegate {
+                    id: hit
                     required property var modelData
+                    // Already listed: greyed, but left hoverable so the
+                    // tooltip can say why it does nothing.
+                    readonly property bool listed: page.has(modelData.symbol)
                     Layout.fillWidth: true
-                    enabled: !page.has(modelData.symbol)
-                    onClicked: page.add(modelData)
+                    opacity: listed ? 0.5 : 1
+                    onClicked: if (!listed) page.add(modelData)
+                    QQC2.ToolTip.text: listed ? i18n("Already on your watchlist") : i18n("Add to the watchlist")
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                     contentItem: RowLayout {
                         spacing: Kirigami.Units.largeSpacing
+                        // Remote text (Yahoo's): always plain, never markup.
                         QQC2.Label {
                             text: modelData.symbol
+                            textFormat: Text.PlainText
                             font.bold: true
                             Layout.preferredWidth: Kirigami.Units.gridUnit * 6
                             elide: Text.ElideRight
                         }
                         QQC2.Label {
                             text: modelData.shortname || modelData.longname || ""
+                            textFormat: Text.PlainText
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                         }
                         QQC2.Label {
                             text: page.kind(modelData.quoteType)
                                   + (modelData.exchDisp ? " · " + modelData.exchDisp : "")
+                            textFormat: Text.PlainText
                             opacity: 0.7
                         }
                         Kirigami.Icon {
-                            source: page.has(modelData.symbol) ? "checkmark" : "list-add"
+                            source: hit.listed ? "checkmark" : "list-add"
                             implicitWidth: Kirigami.Units.iconSizes.small
                             implicitHeight: Kirigami.Units.iconSizes.small
                         }
@@ -207,6 +284,10 @@ KCM.SimpleKCM {
                             listView: list
                             onMoveRequested: (oldIndex, newIndex) => watch.move(oldIndex, newIndex, 1)
                             onDropped: page.save()
+                            HoverHandler { id: handleHover }
+                            QQC2.ToolTip.text: i18n("Drag to change the order on the tape and watchlist")
+                            QQC2.ToolTip.visible: handleHover.hovered
+                            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                         }
                         QQC2.ToolButton {
                             icon.name: holder.star ? "starred-symbolic" : "non-starred-symbolic"
@@ -223,25 +304,32 @@ KCM.SimpleKCM {
                             Layout.fillWidth: true
                             spacing: 0
                             QQC2.Label {
-                                text: holder.symbol
+                                text: holder.symbol === "@themes" ? i18n("Themes (beta)") : holder.symbol
+                                textFormat: Text.PlainText
                                 font.bold: true
                             }
                             QQC2.Label {
                                 Layout.fillWidth: true
                                 text: holder.name
+                                textFormat: Text.PlainText
                                 elide: Text.ElideRight
                                 font: Kirigami.Theme.smallFont
                                 opacity: 0.7
                             }
                         }
                         QQC2.TextField {
+                            id: labelField
                             Layout.preferredWidth: Kirigami.Units.gridUnit * 7
                             text: holder.label
                             placeholderText: i18n("Label")
                             onEditingFinished: {
                                 const t = text.trim() || page.defaultLabel(holder.symbol)
                                 if (t !== holder.label) { watch.setProperty(holder.index, "label", t); page.save() }
+                                else text = Qt.binding(() => holder.label)
                             }
+                            QQC2.ToolTip.text: i18n("What the tape prints for this symbol. Leave empty to use the symbol.")
+                            QQC2.ToolTip.visible: hovered
+                            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                         }
                         QQC2.ToolButton {
                             icon.name: "edit-delete-remove"

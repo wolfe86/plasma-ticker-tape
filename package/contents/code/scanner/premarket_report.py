@@ -20,6 +20,18 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 ET = ZoneInfo("America/New_York")
 
 
+# A reply past this size is refused rather than read into memory: one
+# runaway or hostile answer must not stall the widget (2026-10-24).
+MAX_REPLY = 16 * 1024 * 1024
+
+
+def _read_capped(r, limit=MAX_REPLY):
+    body = r.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError(f"reply over {limit // 1048576} MB")
+    return body
+
+
 def fetch(url, retries=3, timeout=25):
     """GET with a browser UA and simple backoff."""
     for attempt in range(retries):
@@ -30,7 +42,7 @@ def fetch(url, retries=3, timeout=25):
                 "Accept-Language": "en-US,en;q=0.9",
             })
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read().decode("utf-8", errors="ignore")
+                return _read_capped(r).decode("utf-8", errors="ignore")
         except Exception as e:
             if attempt == retries - 1:
                 print(f"  ! fetch failed {url}: {e}", file=sys.stderr)
@@ -134,9 +146,26 @@ def get_finviz(ticker):
 
     out["news"] = parse_finviz_news(html)
 
-    sm = re.search(r'screener\.ashx\?v=\d+&f=sec_[^"]*"[^>]*>([^<]+)<', html)
-    out["Sector"] = sm.group(1).strip() if sm else ""
+    out["Sector"] = finviz_category(html, "sec")
+    out["Industry"] = finviz_category(html, "ind")
     return out
+
+
+# The sector / industry / country chips in the quote header. Finviz has used
+# two markups: the older `screener.ashx?v=111&f=sec_healthcare` and the current
+# `screener?v=111&f=sec_healthcare`, whose industry chip wraps its text in a
+# <span class="min-w-0 truncate">. Both are matched, newest first, so a markup
+# change breaks the field rather than the scrape -- the old pattern silently
+# returned "" from the day Finviz dropped `.ashx`, which is why `Sector` was
+# empty for every ticker before 2026-10-23.
+def finviz_category(html, kind):
+    m = re.search(rf'f={kind}_[^"\'>]*["\'][^>]*>(?:\s*<span[^>]*>)?([^<]+)<', html)
+    if not m:
+        return ""
+    t = m.group(1)
+    for a, b in (("&amp;", "&"), ("&nbsp;", " "), ("&#39;", "'"), ("&quot;", '"')):
+        t = t.replace(a, b)
+    return t.strip()
 
 
 # Wire services that carry company press releases. Finviz also lists articles and

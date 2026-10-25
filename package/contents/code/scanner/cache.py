@@ -26,6 +26,17 @@ PRUNE_EVERY = 25             # writes between size checks
 _mem = {}
 _writes = 0
 
+# A reply past this size is refused rather than read into memory: one
+# runaway or hostile answer must not stall the widget (2026-10-24).
+MAX_REPLY = 64 * 1024 * 1024
+
+
+def _read_capped(r, limit=MAX_REPLY):
+    body = r.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError(f"reply over {limit // 1048576} MB")
+    return body
+
 
 def _path(url):
     return DIR / (hashlib.sha256(url.encode()).hexdigest()[:32] + ".json")
@@ -64,7 +75,7 @@ def fetch(url, ttl, headers=None, timeout=25, fetcher=None):
         else:
             req = urllib.request.Request(url, headers=headers or {})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                fresh = r.read().decode("utf-8", errors="ignore")
+                fresh = _read_capped(r).decode("utf-8", errors="ignore")
     except Exception as e:
         if body is not None:
             # Stale beats nothing: the upstream is down, the numbers are a day

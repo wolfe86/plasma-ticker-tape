@@ -10,7 +10,7 @@
 // What a rule can test. `kind` decides the comparisons offered:
 //   number -- at least / at most / between
 //   flag   -- yes (the row has it)
-//   level  -- at most (an ordered rating)
+//   level  -- at most / at least (an ordered rating; the measure has `levels`)
 var measures = [
     { key: "price",      name: "Price",                  kind: "number", unit: "$" },
     { key: "change",     name: "Change on the day",      kind: "number", unit: "%" },
@@ -23,7 +23,25 @@ var measures = [
     { key: "marketCap",  name: "Market cap",             kind: "number", unit: "$" },
     { key: "newsAge",    name: "Headline within",        kind: "number", unit: "hours" },
     { key: "catalyst",   name: "Press-wire news, 2 days", kind: "flag" },
-    { key: "dilution",   name: "Dilution rating",        kind: "level" },
+    { key: "dilution",   name: "Dilution rating",        kind: "level", levels: ["LOW", "MEDIUM", "HIGH", "EXTREME"] },
+    // The theme the row belongs to, and how hot that theme is (themes.js).
+    // `themeStatus` is ordered worst to best, so "at least building" is a
+    // rule; the rest are plain numbers.
+    { key: "themeStatus",  name: "Theme",                 kind: "level", levels: ["burnt", "quiet", "building", "hot"] },
+    { key: "themeMembers", name: "Theme members today",   kind: "number", unit: "stocks" },
+    { key: "themeRan",     name: "Theme members that ran", kind: "number", unit: "stocks" },
+    { key: "themeFollow",  name: "Theme follow-through",  kind: "number", unit: "%" },
+    { key: "themeMove",    name: "Theme median peak",     kind: "number", unit: "%" },
+    { key: "themeLift",    name: "Theme vs its baseline", kind: "number", unit: "×" },
+    { key: "themeStreak",  name: "Theme day",             kind: "number", unit: "days" },
+    { key: "themeShells",  name: "Theme serial issuers",  kind: "number", unit: "%" },
+    { key: "themeFreshPct", name: "Theme names new to it", kind: "number", unit: "%" },
+    // The row's sector (or a crypto pair's category), heat-mapped the same way.
+    { key: "sectorStatus",  name: "Sector",                kind: "level", levels: ["burnt", "quiet", "building", "hot"] },
+    { key: "sectorMembers", name: "Sector members today",  kind: "number", unit: "stocks" },
+    { key: "sectorRan",     name: "Sector members that ran", kind: "number", unit: "stocks" },
+    { key: "sectorFollow",  name: "Sector follow-through", kind: "number", unit: "%" },
+    { key: "sectorMove",    name: "Sector median peak",    kind: "number", unit: "%" },
     // Long-term fundamentals (SEC filings, through the scanner).
     { key: "p1", name: "5-year P/E under 22.5",            kind: "flag" },
     { key: "p2", name: "ROIC 9% or more",                  kind: "flag" },
@@ -37,9 +55,24 @@ var measures = [
 var ops = {
     number: [ { key: ">=", name: "at least" }, { key: "<=", name: "at most" }, { key: "between", name: "between" } ],
     flag:   [ { key: "yes", name: "yes" } ],
-    level:  [ { key: "<=", name: "at most" } ]
+    level:  [ { key: "<=", name: "at most" }, { key: ">=", name: "at least" } ]
 }
+// Kept for callers that still name it; a measure now carries its own `levels`.
 var levels = ["LOW", "MEDIUM", "HIGH", "EXTREME"]
+
+// An ordered rating's steps, or null when the measure is not one.
+function levelsOf(key) {
+    const m = measure(key)
+    return m && m.levels ? m.levels : null
+}
+// A rule's target as a position in that order, so "at least building" and
+// "at most HIGH" both compare as numbers.
+function levelIndex(key, v) {
+    const L = levelsOf(key)
+    if (!L) return v
+    const i = L.indexOf(v)
+    return i >= 0 ? i : (typeof v === "number" ? v : -1)
+}
 
 function measure(key) {
     for (let i = 0; i < measures.length; i++) if (measures[i].key === key) return measures[i]
@@ -57,9 +90,13 @@ function figure(r, key) {
         return p && p.passed !== null && p.passed !== undefined ? p.passed : undefined
     }
     if (key === "dilution") {
-        const i = r.dilution ? levels.indexOf(r.dilution.risk) : -1
+        const i = r.dilution ? levelIndex("dilution", r.dilution.risk) : -1
         return i >= 0 ? i : undefined
     }
+    // A row with no theme fails every theme rule rather than passing it by
+    // default: "the theme is hot" must not be true of a stock that has none.
+    if (key.indexOf("theme") === 0 && !r.theme) return undefined
+    if (key.indexOf("sector") === 0 && !r.sector) return undefined
     return known(r[key]) ? r[key] : undefined
 }
 
@@ -68,8 +105,8 @@ function test(rule, r) {
     const v = figure(r, rule.measure)
     if (v === undefined) return undefined
     switch (rule.op) {
-    case ">=":      return v >= rule.value
-    case "<=":      return rule.measure === "dilution" ? v <= levels.indexOf(rule.value) : v <= rule.value
+    case ">=":      return v >= levelIndex(rule.measure, rule.value)
+    case "<=":      return v <= levelIndex(rule.measure, rule.value)
     case "between": return v >= rule.value && v <= rule.value2
     case "yes":     return v === true
     }
@@ -96,8 +133,8 @@ function describe(rule) {
     const m = measure(rule.measure)
     const f = v => (m.unit === "$" ? "$" : "") + fmt(v) + (m.unit === "%" ? "%" : m.unit === "×" ? "×" : m.unit === "hours" ? " h" : "")
     switch (rule.op) {
-    case ">=":      return rule.name + " ≥ " + f(rule.value)
-    case "<=":      return rule.name + " ≤ " + (rule.measure === "dilution" ? rule.value : f(rule.value))
+    case ">=":      return rule.name + " ≥ " + (levelsOf(rule.measure) ? rule.value : f(rule.value))
+    case "<=":      return rule.name + " ≤ " + (levelsOf(rule.measure) ? rule.value : f(rule.value))
     case "between": return rule.name + " " + f(rule.value) + "–" + f(rule.value2)
     }
     return rule.name
@@ -118,6 +155,21 @@ function valueText(rule, r) {
     case "newsAge":    return r.newsTime ? Math.round((Date.now() - r.newsTime) / 3600000) + " h ago" : (r.factsKnown ? "none" : "not known")
     case "catalyst":   return r.factsKnown ? (r.catalyst ? "yes" : "none in 2 days") : "not known"
     case "dilution":   return r.dilution ? r.dilution.risk : "not known"
+    case "themeStatus":   return r.theme && r.themeHeat
+                                 ? r.theme.name + " — " + r.themeHeat.status : "no theme"
+    case "themeMembers":
+    case "themeRan":
+    case "themeStreak":   return r.theme ? String(v) : "no theme"
+    case "themeFollow":
+    case "themeShells":
+    case "themeFreshPct": return r.theme && known(v) ? Math.round(v) + "%" : "no theme"
+    case "themeMove":     return r.theme && known(v) ? "+" + Math.round(v) + "%" : "no theme"
+    case "themeLift":     return r.theme && known(v) ? (Math.round(v * 10) / 10) + "×" : "no baseline yet"
+    case "sectorStatus":  return r.sector && r.sectorHeat ? r.sector.name + " — " + r.sectorHeat.status : "no sector"
+    case "sectorMembers":
+    case "sectorRan":     return r.sector ? String(v) : "no sector"
+    case "sectorFollow":  return r.sector && known(v) ? Math.round(v) + "%" : "no sector"
+    case "sectorMove":    return r.sector && known(v) ? "+" + Math.round(v) + "%" : "no sector"
     }
     if (/^p[1-8]$/.test(rule.measure)) {
         const p = (r.value && r.value.pillars || []).find(x => "p" + x.n === rule.measure)
@@ -153,7 +205,23 @@ function defaults(cfg) {
             { name: "float", measure: "float",    op: "<=", value: 10e6 },
             { name: "news",  measure: "catalyst", op: "yes" }
         ]
-    }, deepValue() ]
+    }, deepValue(), themeCard() ]
+}
+// The theme scorecard: is the story this row belongs to actually live? Each
+// rule is one of the readings behind the theme glyph, so a row can be scored
+// on its theme the way a value name is scored on its fundamentals.
+//
+// `themeStatus >= building` does most of the work; the rest say why, and are
+// what to loosen or tighten while the thing is being tuned.
+function themeCard() {
+    return { id: "theme", name: "Theme heat", rules: [
+        { name: "live",    measure: "themeStatus",   op: ">=", value: "building" },
+        { name: "members", measure: "themeMembers",  op: ">=", value: 2 },
+        { name: "ran",     measure: "themeFollow",   op: ">=", value: 40 },
+        { name: "move",    measure: "themeMove",     op: ">=", value: 30 },
+        { name: "fresh",   measure: "themeFreshPct", op: ">=", value: 50 },
+        { name: "shells",  measure: "themeShells",   op: "<=", value: 50 }
+    ] }
 }
 // The long-term value scorecard: eight fundamental checks from SEC filings.
 function deepValue() {
@@ -172,7 +240,10 @@ function deepValue() {
 function load(cfg) {
     try {
         const list = JSON.parse(cfg.scorecards || "[]")
-        if (Array.isArray(list) && list.length) return list
+        // A hand-edited card may have no rules list; it scores as having none.
+        const l = Array.isArray(list) ? list.filter(c => c && typeof c === "object")
+            .map(c => Array.isArray(c.rules) ? c : Object.assign({}, c, { rules: [] })) : []
+        if (l.length) return l
     } catch (e) {}
     return defaults(cfg)
 }

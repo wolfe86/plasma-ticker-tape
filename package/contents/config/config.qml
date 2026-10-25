@@ -18,9 +18,19 @@ ConfigModel {
         source: "configScorecards.qml"
     }
     ConfigCategory {
+        name: i18n("Themes")
+        icon: "color-picker"
+        source: "configThemes.qml"
+    }
+    ConfigCategory {
         name: i18n("Tape")
         icon: "preferences-desktop-display"
         source: "configTape.qml"
+    }
+    ConfigCategory {
+        name: i18n("Performance")
+        icon: "speedometer"
+        source: "configPerformance.qml"
     }
     ConfigCategory {
         name: i18n("Data")

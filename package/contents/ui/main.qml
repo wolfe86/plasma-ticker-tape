@@ -22,6 +22,7 @@ import QtQuick.Layouts
 import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
 import org.kde.kirigami as Kirigami
+import "themes.js" as Themes
 
 PlasmoidItem {
     id: root
@@ -80,10 +81,16 @@ PlasmoidItem {
     // ── the watchlist ────────────────────────────────────────────────────
     // Parsed from settings; a corrupt value shows an empty tape rather than
     // breaking the widget.
-    readonly property var symbols: {
+    // `allSymbols` is the list as saved, including the tape's Themes entry
+    // ("@themes", which expands into the tickers of the themes running hot);
+    // `symbols` is the real ones, which are fetched and make the watchlist.
+    readonly property string themesEntry: "@themes"
+    readonly property var allSymbols: {
         try { return JSON.parse(Plasmoid.configuration.symbols) } catch (e) { return [] }
     }
-    readonly property var starred: symbols.filter(s => s.star)
+    readonly property var symbols: allSymbols.filter(s => s.symbol !== themesEntry)
+    readonly property var starred: allSymbols.filter(s => s.star)
+    readonly property var themeTape: screenerEngine.tapeThemeTickers()
     onSymbolsChanged: pollAll()
 
     // Last-known reading per symbol, keyed by symbol. Replaced wholesale on
@@ -130,8 +137,21 @@ PlasmoidItem {
                 f.stale = false
             } catch (e) {
                 // Request failed or the endpoint changed shape: keep the
-                // last number and grey it out.
-                f.stale = true
+                // last number and grey it out -- unless it is a Coinbase
+                // pair Yahoo does not carry (most small coins), which the
+                // crypto screener already has a live quote for.
+                const cq = root.screener.cquotes[sym]
+                if (!cq && /^[A-Z0-9]{1,15}-USD$/.test(sym)) { coinbaseQuote(sym, f); return }
+                if (cq) {
+                    f.value = cq.price
+                    f.pct = cq.change
+                    f.type = "CRYPTOCURRENCY"
+                    f.currency = "USD"
+                    f.meta = { longName: cq.name, shortName: cq.name, fullExchangeName: "Coinbase", currency: "USD",
+                               instrumentType: "CRYPTOCURRENCY", chartPreviousClose: cq.price / (1 + cq.change / 100) }
+                    f.spark = f.spark || []
+                    f.stale = false
+                } else f.stale = true
             }
             const next = Object.assign({}, root.feeds)
             next[sym] = f
@@ -142,6 +162,39 @@ PlasmoidItem {
                + encodeURIComponent(sym) + "?interval=5m&range=1d")
         x.setRequestHeader("User-Agent", "Mozilla/5.0")
         x.send()
+    }
+
+    // A Coinbase pair Yahoo does not carry, with no crypto screen on to
+    // quote it (PEPE-USD showed "--", 2026-10-24): Coinbase's own 24-hour
+    // figures, and its 5-minute candles for the sparkline. Keeps the last
+    // number, greyed, when Coinbase has no such pair either.
+    function coinbaseQuote(sym, f) {
+        const done = () => {
+            const next = Object.assign({}, root.feeds)
+            next[sym] = f
+            root.feeds = next
+            root.updated = new Date()
+        }
+        yget("https://api.exchange.coinbase.com/products/" + encodeURIComponent(sym) + "/stats", x => {
+            let d = null
+            try { d = JSON.parse(x.responseText) } catch (e) {}
+            const last = d ? +d.last : NaN, open = d ? +d.open : NaN
+            if (!(last > 0)) { f.stale = true; done(); return }
+            f.value = last
+            f.pct = open > 0 ? (last / open - 1) * 100 : 0
+            f.type = "CRYPTOCURRENCY"
+            f.currency = "USD"
+            f.meta = { longName: sym, shortName: sym, fullExchangeName: "Coinbase", currency: "USD",
+                       instrumentType: "CRYPTOCURRENCY", chartPreviousClose: open > 0 ? open : last }
+            f.stale = false
+            yget("https://api.exchange.coinbase.com/products/" + encodeURIComponent(sym) + "/candles?granularity=300", y => {
+                let c = null
+                try { c = JSON.parse(y.responseText) } catch (e) {}
+                // Newest first, [time, low, high, open, close, volume]; a day of them.
+                f.spark = Array.isArray(c) ? c.slice(0, 288).reverse().map(b => +b[4]).filter(v => v > 0) : (f.spark || [])
+                done()
+            })
+        })
     }
 
     // ── the quote token ("crumb") ─────────────────────────────────────────
@@ -221,11 +274,64 @@ PlasmoidItem {
              + format(f, f.value) + "&nbsp;" + (up ? "\u25B2" : "\u25BC") + "</b></font>"
     }
 
+    // The theme's glyph inline in the tape, in its heat colour, at the
+    // tape's text height (Settings → Tape → Mark: Icon or Both). StyledText's
+    // <img> loads the same self-contained SVG the screener draws; a custom
+    // icon that is a file is shown as it is, one from the icon theme cannot
+    // be drawn inside styled text and falls back to the built-in glyph.
+    readonly property var themeIcons: {
+        try { return JSON.parse(Plasmoid.configuration.themeIcons || "{}") } catch (e) { return ({}) }
+    }
+    readonly property int tapeIconPx: Math.round(tapeMetrics.height * 0.85)
+    FontMetrics { id: tapeMetrics; font.family: Kirigami.Theme.fixedWidthFont.family; font.pointSize: Kirigami.Theme.defaultFont.pointSize }
+    function themeImg(theme, status) {
+        const heat = Themes.colour(status, (theme && theme.ramp) || Plasmoid.configuration.themeRamp)
+        const own = theme ? Themes.custom(theme, themeIcons) : null
+        // A file path goes in as a URL, each part encoded, so a ', #, % or ?
+        // in it cannot end the attribute or cut the path short.
+        const src = own && String(own.icon).charAt(0) === "/"
+                  ? "file://" + String(own.icon).split("/").map(encodeURIComponent).join("/").replace(/'/g, "%27")
+                  : Themes.icon(theme ? Themes.glyphName(theme, themeIcons) : "dot", heat, Themes.filled(status),
+                                Themes.crossed(status), Themes.edge(status, (theme && theme.ramp) || Plasmoid.configuration.themeRamp))
+        return "<img src='" + src + "' width='" + tapeIconPx + "' height='" + tapeIconPx + "' align='middle'>"
+    }
+    readonly property string themeMark: Plasmoid.configuration.tapeThemeMark || "name"
+    // A theme's heat in words, translated: the engine's statuses are keys.
+    function statusLabel(s) {
+        return ({ hot: i18n("hot"), building: i18n("building"), quiet: i18n("quiet"), burnt: i18n("burnt") })[s] || String(s || "")
+    }
+    // The Themes entry's segments: a dot in the theme's heat colour, the
+    // theme's name if wanted, the ticker, its price and direction. While no
+    // theme is hot it says so, so the entry is visibly working.
+    function themeSegments() {
+        const dim = hex(Kirigami.Theme.disabledTextColor)
+        if (!themeTape.length)
+            return ["<font color='" + dim + "'>" + esc(i18n("Themes: none %1", Plasmoid.configuration.tapeThemeStatus === "building" ? i18n("strong") : i18n("hot"))) + "</font>"]
+        return themeTape.map(r => {
+            const heat = Themes.colour(r.status, (r.theme && r.theme.ramp) || Plasmoid.configuration.themeRamp)
+            // A strong theme with no running ticker: the theme holds the slot.
+            // A theme with nothing running always shows its name: without a
+            // ticker, the name is the information.
+            if (r.kind === "theme")
+                return (themeMark === "name" ? "<font color='" + heat + "'>\u25CF</font>" : themeImg(r.theme, r.status))
+                     + "&nbsp;<font color='" + heat + "'>" + esc(r.theme.name) + "</font>&nbsp;"
+                     + "<font color='" + dim + "'>" + esc(statusLabel(r.status) + (r.streak > 1 ? " · " + i18n("day %1", r.streak) : "")) + "</font>"
+            const up = r.change >= 0
+            const px = !(r.price > 0) ? "--" : r.price >= 1 ? r.price.toFixed(2) : r.price.toPrecision(4)
+            return (themeMark === "name" ? "<font color='" + heat + "'>\u25CF</font>" : themeImg(r.theme, r.status)) + "&nbsp;"
+                 + (themeMark !== "icon" ? "<font color='" + heat + "'>" + esc(r.theme.name) + "</font>&nbsp;" : "")
+                 + "<font color='" + dim + "'>" + esc(r.symbol.replace(/-USD$/, "")) + "</font>&nbsp;"
+                 + "<font color='" + hex(up ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.negativeTextColor) + "'><b>"
+                 + px + "&nbsp;" + (up ? "\u25B2" : "\u25BC") + "</b></font>"
+        })
+    }
     readonly property string tapeText: {
         if (starred.length === 0)
             return "<font color='" + hex(Kirigami.Theme.disabledTextColor) + "'>"
                  + "No&nbsp;symbols&nbsp;starred&nbsp;for&nbsp;the&nbsp;tape</font>" + sep
-        return starred.map(s => segment(s, feed(s.symbol))).join(sep) + sep
+        let parts = []
+        for (const s of starred) parts = parts.concat(s.symbol === themesEntry ? themeSegments() : [segment(s, feed(s.symbol))])
+        return parts.join(sep) + sep
     }
 
     // ── the tooltip ──────────────────────────────────────────────────────
@@ -236,6 +342,17 @@ PlasmoidItem {
     toolTipSubText: {
         let rows = ""
         for (const s of starred) {
+            if (s.symbol === themesEntry) {
+                const names = Array.from(new Set(themeTape.map(r => r.theme.name)))
+                rows += "<tr><td>" + esc(i18n("Themes")) + "</td><td colspan='3'>&nbsp;&nbsp;"
+                      + (names.length ? esc(names.map(n => {
+                            const tick = themeTape.filter(r => r.theme.name === n && r.kind === "ticker").map(r => r.symbol)
+                            const th = themeTape.find(r => r.theme.name === n)
+                            return n + " (" + statusLabel(th.status) + "): " + (tick.length ? tick.join(", ") : i18n("no ticker running now"))
+                        }).join(" · "))
+                                      : esc(i18n("none strong"))) + "</td></tr>"
+                continue
+            }
             const f = feed(s.symbol)
             let cells = "<td>" + esc(s.name || s.symbol) + "</td>"
             if (f.value === null) {

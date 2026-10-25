@@ -40,6 +40,10 @@ PlasmaExtras.Representation {
                                      + header.implicitHeight + footer.implicitHeight,
                                      Kirigami.Units.gridUnit * 32)
     collapseMarginsHint: true
+    // The dialog's own margins are collapsed so the headings run edge to
+    // edge; the content keeps a small margin of its own, or text touches
+    // the pop-up's left edge.
+    readonly property real sideMargin: Kirigami.Units.smallSpacing
 
     header: PlasmaExtras.PlasmoidHeading {
         RowLayout {
@@ -66,7 +70,7 @@ PlasmaExtras.Representation {
             PlasmaComponents3.ToolButton {
                 icon.name: "configure"
                 onClicked: Plasmoid.internalAction("configure").trigger()
-                PlasmaComponents3.ToolTip { text: i18n("Add, remove and star symbols") }
+                PlasmaComponents3.ToolTip { text: i18n("Settings: symbols, screeners, tape and more") }
             }
         }
     }
@@ -87,6 +91,8 @@ PlasmaExtras.Representation {
     // headlines, it is taller than the pop-up.
     Loader {
         anchors.fill: parent
+        anchors.leftMargin: pop.sideMargin
+        anchors.rightMargin: pop.sideMargin
         active: pop.detail !== null
         sourceComponent: PlasmaComponents3.ScrollView {
             id: detailScroll
@@ -103,6 +109,8 @@ PlasmaExtras.Representation {
 
     News {
         anchors.fill: parent
+        anchors.leftMargin: pop.sideMargin
+        anchors.rightMargin: pop.sideMargin
         visible: pop.detail === null && pop.tab === 3
         engine: pop.ticker.screener
         onOpen: entry => pop.detail = entry
@@ -110,6 +118,8 @@ PlasmaExtras.Representation {
 
     Calendar {
         anchors.fill: parent
+        anchors.leftMargin: pop.sideMargin
+        anchors.rightMargin: pop.sideMargin
         visible: pop.detail === null && pop.tab === 2
         engine: pop.ticker.screener
         onOpen: entry => pop.detail = entry
@@ -117,13 +127,56 @@ PlasmaExtras.Representation {
 
     Screener {
         anchors.fill: parent
+        anchors.leftMargin: pop.sideMargin
+        anchors.rightMargin: pop.sideMargin
         visible: pop.detail === null && pop.tab === 1
         engine: pop.ticker.screener
         onOpen: entry => pop.detail = entry
     }
 
+    // A quick look-up: a symbol typed here opens its detail view without
+    // joining the watchlist. Same as a headline's ticker (News.openStock).
+    PlasmaComponents3.TextField {
+        id: lookup
+        visible: pop.detail === null && pop.tab === 0
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: pop.sideMargin
+        anchors.rightMargin: pop.sideMargin
+        anchors.topMargin: Kirigami.Units.smallSpacing
+        anchors.bottomMargin: Kirigami.Units.smallSpacing
+        placeholderText: i18n("Look up a symbol: AIRE, ^GSPC, BTC-USD…")
+        clearButtonShown: true
+        onAccepted: {
+            const typed = text.trim().toUpperCase()
+            text = ""
+            if (!typed.length) return
+            const eng = pop.ticker.screener
+            const open = sym => pop.detail = { symbol: sym, label: sym, name: sym, star: false }
+            // Coinbase trades a coin against USD as "BTC-USD": a plain symbol with
+            // such a pair opens as the coin. A symbol with a suffix opens as typed.
+            if (Object.keys(eng.cproducts).length === 0) eng.refreshCryptoProducts(true)
+            if (/[-^=]/.test(typed)) return open(typed)
+            if (eng.cproducts[typed + "-USD"]) return open(typed + "-USD")
+            // Not on Coinbase: a stock if Yahoo has a price for it, else the
+            // Yahoo crypto pair (Monero, for one, is not on Coinbase).
+            pop.ticker.yget("https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(typed)
+                            + "?range=1d&interval=1d", x => {
+                let priced = false
+                try { priced = (JSON.parse(x.responseText).chart.result[0].meta.regularMarketPrice || 0) > 0 } catch (e) {}
+                open(priced ? typed : typed + "-USD")
+            })
+        }
+    }
+
     PlasmaComponents3.ScrollView {
-        anchors.fill: parent
+        anchors.top: lookup.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: pop.sideMargin
+        anchors.rightMargin: pop.sideMargin
         visible: pop.detail === null && pop.tab === 0
 
         ListView {
@@ -183,12 +236,14 @@ PlasmaExtras.Representation {
                         spacing: 0
                         PlasmaComponents3.Label {
                             Layout.fillWidth: true
+                            textFormat: Text.PlainText
                             text: row.s.label || row.s.symbol
                             font.bold: true
                             elide: Text.ElideRight
                         }
                         PlasmaComponents3.Label {
                             Layout.fillWidth: true
+                            textFormat: Text.PlainText
                             text: row.s.name || row.s.symbol
                             font: Kirigami.Theme.smallFont
                             opacity: 0.7

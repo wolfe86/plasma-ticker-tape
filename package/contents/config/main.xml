@@ -58,10 +58,17 @@
     <entry name="valueCapMin" type="Double">
       <default>2000000000</default>
     </entry>
+    <!-- Score column: the coloured count only, without a dot per rule. -->
+    <entry name="scoreCompact" type="Bool">
+      <default>false</default>
+    </entry>
     <entry name="rankedValueColumns" type="Bool">
       <default>false</default>
     </entry>
     <entry name="losersAdded" type="Bool">
+      <default>false</default>
+    </entry>
+    <entry name="hunterAdded" type="Bool">
       <default>false</default>
     </entry>
     <entry name="valueAdded" type="Bool">
@@ -88,9 +95,10 @@
     <entry name="poolMinAvg" type="Int">
       <default>300000</default>
     </entry>
+    <!-- Settings → Performance offers the same 10-120 s range. -->
     <entry name="passSeconds" type="Int">
       <default>30</default>
-      <min>15</min>
+      <min>10</min>
       <max>120</max>
     </entry>
     <!-- Running Up: runPct% above the lowest price in the last runWindow
@@ -121,11 +129,162 @@
     <entry name="screenerSort" type="String">
       <default></default>
     </entry>
+    <!-- The theme detector (beta): off hides its column and detail tag and
+         stops its tally. -->
+    <!-- Alert sounds: the player command ("" = whichever is installed,
+         %f = the file), and alert times in local time instead of New York's. -->
+    <entry name="soundPlayer" type="String">
+      <default></default>
+    </entry>
+    <entry name="timesLocal" type="Bool">
+      <default>false</default>
+    </entry>
+    <!-- The Google News edition the detail card's fallback news uses. -->
+    <entry name="newsLocale" type="String">
+      <default>en-US</default>
+    </entry>
+    <!-- The tape's Themes entry (symbol "@themes" in Symbols): which theme
+         readings put a ticker on the tape, how many at most, and whether
+         the theme's name goes with it. -->
+    <entry name="tapeThemeStatus" type="String">
+      <default>hot</default>
+    </entry>
+    <entry name="tapeThemeMax" type="Int">
+      <default>10</default>
+    </entry>
+    <!-- A theme ticker leaves the tape once it is this far (%) below its
+         session high; the theme itself then holds the slot while strong. -->
+    <entry name="tapeThemeDrop" type="Int">
+      <default>20</default>
+    </entry>
+    <!-- Treat the last session's members (at their latest prices) as live:
+         a weekend preview of the Themes entry, and a way to test it. -->
+    <entry name="tapeThemePreview" type="Bool">
+      <default>false</default>
+    </entry>
+    <!-- The 200-day EMA rule (Matt, 2026-10-24: below it a ticker is almost
+         never tradable, theme or not). Tape: theme tickers must be above it.
+         ShortHistory: a stock with under 200 sessions has no 200 EMA yet;
+         true lets it through (tape and the screener filter alike). -->
+    <entry name="tapeAbove200" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="ema200ShortHistory" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- What marks a theme ticker on the tape: "name" (a heat-coloured dot
+         and the theme's name), "icon" (the theme's glyph in its heat colour)
+         or "both". -->
+    <entry name="tapeThemeMark" type="String">
+      <default>name</default>
+    </entry>
+    <entry name="themesOn" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- Sectors (beta): the second layer under themes. Off hides the column
+         and tag and stops the sector tally. Overrides: {"TICKER": "s-energy"}. -->
+    <!-- Settings → Themes → Your themes / Your sectors (themes.js). Themes
+         never saved ("") = the starter set; saved empty ("[]") = none.
+         Empty sectors = none of your own. A theme's pinned tickers are
+         {symbol, from}: pinned from that day ("" = always). -->
+    <entry name="customThemes" type="String">
+      <default></default>
+    </entry>
+    <entry name="customSectors" type="String">
+      <default></default>
+    </entry>
+    <entry name="sectorsOn" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="sectorOverrides" type="String">
+      <default></default>
+    </entry>
+    <!-- Overrides for themes.js `defaults`: JSON {ranPct, hotRan, liftX,
+         bldX, keepDays, minHistory, window}. Anything absent keeps its
+         built-in value. Keys from before 2026-10-24 (minMembers, hotFollow,
+         coldTrips, burnWindow) are ignored. -->
+    <entry name="themeTuning" type="String">
+      <default></default>
+    </entry>
+    <!-- A theme that was hot is burnt (dead) after this many calendar days
+         with no runner (Matt, 2026-10-24). -->
+    <entry name="themeDeadDays" type="Int">
+      <default>30</default>
+      <min>1</min>
+      <max>90</max>
+    </entry>
+    <!-- Sessions a stock stays on a theme after its headline last matched
+         the theme's words (0 = only while it matches). -->
+    <entry name="themeStickySessions" type="Int">
+      <default>10</default>
+      <min>0</min>
+      <max>60</max>
+    </entry>
+    <!-- The theme icon's colour ramp: heat (grey/amber/red), market
+         (grey/amber/green, keeping red for down) or violet. -->
+    <!-- {theme id: {icon, keep}}: icon-theme names or file paths. -->
+    <entry name="themeIcons" type="String">
+      <default></default>
+    </entry>
+    <entry name="themeRamp" type="String">
+      <default>heat</default>
+    </entry>
+
     <!-- The Screener tab's tools row and legend: shown or folded away. -->
     <entry name="screenerTools" type="Bool">
       <default>true</default>
     </entry>
     <!-- The detail chart's style, for every range: candles, or a line. -->
+    <!-- Chart overlays: the EMA lengths shown (comma-separated), VWAP, volume. -->
+    <!-- Settings → Data → News sources: JSON array, see ui/newsfeeds.js. -->
+    <!-- Settings → Performance. Defaults are the "Full" preset: every
+         stock every pass, as the widget always ran. -->
+    <entry name="perfPreset" type="String">
+      <default>full</default>
+    </entry>
+    <entry name="smartPoll" type="Bool">
+      <default>false</default>
+    </entry>
+    <entry name="smartRestMinutes" type="Int">
+      <default>5</default>
+    </entry>
+    <entry name="poolMinutes" type="Int">
+      <default>5</default>
+    </entry>
+    <entry name="poolClosedMinutes" type="Int">
+      <default>5</default>
+    </entry>
+    <entry name="closedPassMinutes" type="Int">
+      <default>15</default>
+    </entry>
+    <entry name="cryptoPassSeconds" type="Int">
+      <default>30</default>
+    </entry>
+    <entry name="quoteFields" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="valueMinutes" type="Int">
+      <default>2</default>
+    </entry>
+    <entry name="newsSources" type="String">
+      <default></default>
+    </entry>
+    <entry name="newsPollSeconds" type="Int">
+      <default>60</default>
+    </entry>
+    <!-- The built-in market desks (Seeking Alpha, MarketWatch, CNBC). -->
+    <entry name="newsBuiltins" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="chartEmas" type="String">
+      <default></default>
+    </entry>
+    <entry name="chartVwap" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="chartVolume" type="Bool">
+      <default>true</default>
+    </entry>
     <entry name="chartCandles" type="Bool">
       <default>true</default>
     </entry>
@@ -169,6 +328,15 @@
     </entry>
     <entry name="earningsTickers" type="String">
       <default></default>
+    </entry>
+    <!-- The Calendar tab's view: day | week | month. -->
+    <entry name="calendarView" type="String">
+      <default>week</default>
+    </entry>
+    <!-- News tab: show a picture beside each headline (the feed's own, else
+         the article page's preview image, read from the top of the page). -->
+    <entry name="newsImages" type="Bool">
+      <default>true</default>
     </entry>
   </group>
 </kcfg>

@@ -4,8 +4,10 @@ Bridge from the Plasma Ticker Tape widget to its scanner (contents/code/scanner/
 by default, or the folder set in Settings → Data).
 
 The widget runs this through Plasma's "executable" engine and reads one line
-of JSON from stdout. The scanner's settings arrive as environment variables;
-see scanner/settings.py.
+of JSON from stdout. The scanner's settings arrive in a JSON file only this
+user can read, named by MARKET_TICKER_SETTINGS (see load_settings), and are
+handed on as environment variables; see scanner/settings.py. A manual run
+can export the variables instead.
 
   premarket          stockanalysis.com's premarket gainers. The site answers
                      plain requests with a Cloudflare challenge (2026-10-22);
@@ -20,7 +22,8 @@ see scanner/settings.py.
 
   dilution SYM [..]  Per symbol, from SEC EDGAR through the scanner's
                      dilution.py: shelf registrations (S-3/F-3/S-1/F-1) and
-                     offerings (424B) filed in the last 12 months, and the
+                     share offerings (424B, less the bond prospectuses)
+                     filed in the last 12 months, and the
                      scanner's own risk rating (dilution.dilution_risk:
                      EXTREME / HIGH / MEDIUM / LOW). Context, not a filter.
 
@@ -66,6 +69,7 @@ its own sources instead of reading a traceback as data.
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 
@@ -114,6 +118,12 @@ def stocks(pm, symbols):
             "float": pm.parse_num(fv.get("Shs Float")),
             "shortFloat": pm.parse_num(fv.get("Short Float")),
             "rvol": pm.parse_num(fv.get("Rel Volume")),
+            # The theme column's raw material. Finviz's industry is the useful
+            # one -- "Oil & Gas Midstream", "Other Industrial Metals & Mining" --
+            # where the sector is only one of eleven buckets. Both come off a
+            # page already being fetched, so neither costs a request.
+            "sector": fv.get("Sector", ""),
+            "industry": fv.get("Industry", ""),
             "newsTime": int(top["dt"].timestamp() * 1000) if top else None,
             "newsTitle": top.get("title") if top else "",
             "newsSource": top.get("source") if top else "",
@@ -144,20 +154,31 @@ def dilution(symbols):
         time.sleep(dl.SEC_DELAY)
         rec = d.get("filings", {}).get("recent", {})
         shelves, offers = [], []
-        for form, date in zip(rec.get("form", []), rec.get("filingDate", [])):
+        n = len(rec.get("form", []))
+        col = lambda k: rec.get(k) or [""] * n
+        for form, date, acc, doc in zip(col("form"), col("filingDate"), col("accessionNumber"), col("primaryDocument")):
             if date < cutoff:
                 continue
             if form.startswith(dl.SHELF_FORMS):
                 shelves.append({"form": form, "date": date})
             elif form.startswith(dl.OFFERING_FORMS):
-                offers.append({"form": form, "date": date})
+                offers.append({"form": form, "date": date, "accession": acc, "document": doc})
+        # Bond prospectuses (a 424B5 is filed for notes too) are not share
+        # offerings: the scanner reads each cover where it can.
+        offers.sort(key=lambda f: f["date"], reverse=True)
+        if hasattr(dl, "share_offerings"):
+            offers = dl.share_offerings(cik, offers)
         last_offer = max((o["date"] for o in offers), default=None)
         profile = {
             "shelf_count": len(shelves),
             "offering_count": len(offers),
             "days_since_offering": (datetime.now() - datetime.strptime(last_offer, "%Y-%m-%d")).days
                                    if last_offer else None,
+            "last_kind": offers[0].get("kind", "equity") if offers else None,
         }
+        for o in offers:
+            o.pop("accession", None)
+            o.pop("document", None)
         risk, flags = dl.dilution_risk(profile)
         out[sym] = {"cik": cik, "risk": risk, "flags": flags,
                     "shelves": sorted(shelves, key=lambda f: f["date"], reverse=True),
@@ -166,25 +187,42 @@ def dilution(symbols):
     return out
 
 
-def calendar(days):
+def calendar(days, start=None):
+    """`days` from `start` (YYYY-MM-DD; default today)."""
     import calendar_events as ce
+    from datetime import date
 
     def plain(v):
         # Dates and times as ISO text; everything else as JSON has it.
         return v.isoformat() if hasattr(v, "isoformat") else v
 
     out = []
-    for day, events in ce.week(days=days):
+    for day, events in ce.week(start=date.fromisoformat(start) if start else None, days=days):
         out.append({"date": day.isoformat(),
                     "events": None if events is None
                     else [{k: plain(v) for k, v in e.items()} for e in events]})
     return out
 
 
+def releases(args):
+    """TICKER:YYYY-MM-DD ... -> {TICKER: url or None}, the earnings release on EDGAR."""
+    import calendar_events as ce
+    from datetime import date
+    out = {}
+    for a in args:
+        tick, _, day = a.partition(":")
+        try:
+            out[tick.upper()] = ce.earnings_release(tick, date.fromisoformat(day))
+        except Exception:
+            out[tick.upper()] = None
+    return out
+
+
 def marketnews(n):
     import news
     return [{"title": h["title"], "url": h.get("url") or "", "source": h.get("source") or "",
-             "time": int(h["dt"].timestamp() * 1000)}
+             "time": int(h["dt"].timestamp() * 1000),
+             "image": h.get("image") or "", "tickers": h.get("tickers") or []}
             for h in news.headlines(limit=n)]
 
 
@@ -218,29 +256,65 @@ def tickernews(sym):
             for r in rows]
 
 
+# Every argument after the command is a symbol, a SYMBOL:PRICE:SHARES or
+# TICKER:DATE triple, a count or a date: upper case, digits, ".", ":" and
+# "-" cover them all. Anything else is dropped before it reaches a scanner.
+# The widget quotes each argument and checks symbols itself; this is the
+# second line, for a symbol that came from Yahoo, Nasdaq or Finviz.
+ARG = re.compile(r"[A-Z0-9.:\-]{1,40}")
+
+
+def clean_args(args):
+    return [a for a in (str(x).upper() for x in args) if ARG.fullmatch(a)]
+
+
+def load_settings():
+    """Settings → Data, from the file the widget writes (MARKET_TICKER_SETTINGS,
+    readable by this user only), so they never sit on a command line where
+    `ps` shows them. A manual run can still export the variables by hand."""
+    path = os.environ.get("MARKET_TICKER_SETTINGS", "")
+    if not path or not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        values = json.load(f)
+    for k, v in (values or {}).items():
+        if k.startswith("MARKET_TICKER_") and isinstance(v, str):
+            os.environ[k] = v
+
+
 def main():
+    if len(sys.argv) < 3:
+        print(json.dumps({"error": "usage: scannerbridge.py SCANNER_FOLDER_OR_EMPTY COMMAND [ARGS...]"}))
+        return
     try:
+        load_settings()
         sys.path.insert(0, sys.argv[1] or os.path.join(os.path.dirname(os.path.abspath(__file__)), "scanner"))
         import premarket_report as pm
         cmd = sys.argv[2]
-        if cmd in ("dilution", "value") and not os.environ.get("MARKET_TICKER_SEC_CONTACT", "").strip():
+        args = clean_args(sys.argv[3:])
+        if cmd in ("dilution", "value", "releases") and not os.environ.get("MARKET_TICKER_SEC_CONTACT", "").strip():
             raise RuntimeError("SEC contact not set (Settings → Data)")
         if cmd == "premarket":
             result = premarket(pm)
         elif cmd == "afterhours":
             result = afterhours(pm)
         elif cmd == "dilution":
-            result = dilution([s.upper() for s in sys.argv[3:]])
+            result = dilution(args)
         elif cmd == "calendar":
-            result = calendar(int(sys.argv[3]) if len(sys.argv) > 3 else 7)
+            result = calendar(int(args[0]) if args else 7,
+                              args[1] if len(args) > 1 else None)
+        elif cmd == "releases":
+            result = releases(args)
         elif cmd == "marketnews":
-            result = marketnews(int(sys.argv[3]) if len(sys.argv) > 3 else 40)
+            result = marketnews(int(args[0]) if args else 40)
         elif cmd == "value":
-            result = value([s.upper() for s in sys.argv[3:]])
+            result = value(args)
         elif cmd == "tickernews":
-            result = tickernews(sys.argv[3].upper())
+            if not args:
+                raise ValueError("no valid symbol")
+            result = tickernews(args[0])
         elif cmd == "stocks":
-            result = stocks(pm, [s.upper() for s in sys.argv[3:]])
+            result = stocks(pm, args)
         else:
             result = {"error": "unknown command " + cmd}
     except Exception as e:

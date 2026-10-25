@@ -4,7 +4,15 @@
 //
 // A screen, as stored in the `screens` setting (a JSON array):
 //   { id, name,
-//     type:      "running" | "hod" | "ranked" | "value",
+//     market:    "stocks" (or missing) | "crypto" -- see ScreenerEngine CRYPTO
+//     on:        false hides the screen from the widget and stops it running
+//                (Settings → Screeners keeps it); missing means on
+//     feedsThemes: whether its stocks build the theme and sector tally;
+//                missing means yes for alert screens, no for lists
+//     currency:  "USD" (or missing) | "EUR" ... | "BTC" | "ETH" (crypto only):
+//                prices, market caps and dollar volumes are shown -- and the
+//                screen's filters read -- in it. See ScreenerEngine CURRENCY.
+//     type:      "running" | "hod" | "ranked" | "value",  (no value on crypto)
 //     runPct, runWindow,        // running: rise % within minutes
 //     rankBy, rankCount,        // ranked: measure and how many rows
 //     rankLow,                  // ranked: true lists the lowest first
@@ -17,8 +25,51 @@ var types = [
     { key: "running", name: "Alert: running up" },
     { key: "hod",     name: "Alert: new high of day" },
     { key: "ranked",  name: "Ranked list" },
-    { key: "value",   name: "Long-term value list" }
+    { key: "value",   name: "Long-term value list" },
+    { key: "hunter",  name: "Theme Hunter (beta)" }
 ]
+
+var markets = [
+    { key: "stocks", name: "US stocks" },
+    { key: "crypto", name: "Crypto (Coinbase, 24/7)" }
+]
+// Filters that mean nothing for crypto: there is no float, short interest,
+// news look-up or gap, and its volume is always known.
+// Display currencies, on any screen. `sym` prefixes a figure; `crypto` marks
+// the two whose rate comes from a crypto price rather than an FX quote --
+// a stock or an altcoin priced in bitcoin (Matt, 2026-10-24: bitcoin must
+// be one of the choices everywhere).
+var currencies = [
+    { key: "USD", sym: "$",   name: "US dollar" },
+    { key: "EUR", sym: "€",   name: "Euro" },
+    { key: "GBP", sym: "£",   name: "Pound sterling" },
+    { key: "JPY", sym: "¥",   name: "Japanese yen" },
+    { key: "CAD", sym: "C$",  name: "Canadian dollar" },
+    { key: "AUD", sym: "A$",  name: "Australian dollar" },
+    { key: "CHF", sym: "CHF ", name: "Swiss franc" },
+    { key: "BTC", sym: "₿",   name: "Bitcoin", crypto: true },
+    { key: "ETH", sym: "Ξ",   name: "Ether", crypto: true }
+]
+function currencyOf(screen) {
+    const c = screen && screen.currency
+    return currencies.find(x => x.key === c) || currencies[0]
+}
+var stocksOnly = ["gapMin", "noVolChangeMin", "noVolBounceMin", "floatMin", "floatMax", "shortMin", "newsHours", "rvol5Min"]
+function isCrypto(screen) { return !!screen && screen.market === "crypto" }
+// The same filter reads differently on a crypto screen: its change is over
+// the rolling 24 hours and its volume is dollars traded, not shares.
+var cryptoWording = {
+    changeMin: { label: "Change over 24 hours ≥" },
+    changeMax: { label: "Change over 24 hours ≤" },
+    volumeMin: { label: "24-hour volume at least", unit: "$" },
+    rvolMin:   { label: "24h volume vs 30-day average ≥" }
+}
+function filterLabel(d, screen) { const w = isCrypto(screen) && cryptoWording[d.key]; return w && w.label ? w.label : d.label }
+function filterUnit(d, screen) {
+    const w = isCrypto(screen) && cryptoWording[d.key]
+    const u = w && w.unit ? w.unit : d.unit
+    return u === "$" ? currencyOf(screen).sym.trim() : u
+}
 
 var rankMeasures = [
     { key: "change", name: "Change %" },
@@ -31,7 +82,8 @@ var rankMeasures = [
 // `measure` is the row field tested. `facts` marks a figure that arrives
 // after the alert (Finviz/Yahoo look-ups): such a filter passes until the
 // figure is known, then hides the row if it fails. A quote figure that is
-// not known (no premarket volume, say) also passes rather than blocking.
+// not known (no premarket volume, say) also passes rather than blocking --
+// except a ranked or value list's price and market-cap floors (see passes).
 var filterDefs = [
     { key: "priceMin",  label: "Price at least",          measure: "price",      op: ">=", unit: "$" },
     { key: "priceMax",  label: "Price at most",           measure: "price",      op: "<=", unit: "$" },
@@ -69,10 +121,21 @@ var filterDefs = [
     { key: "offHighMin", label: "Below 52-week high by ≥",  measure: "offHigh",      op: ">=", unit: "%", value: true },
     { key: "above50",    label: "Price above 50-day avg",  measure: "above50",      op: "flag", value: true },
     { key: "below200",   label: "50-day still below 200-day", measure: "below200",  op: "flag", value: true },
-    { key: "turningUp",  label: "50-day avg turning up",   measure: "turningUp",    op: "flag", value: true }
+    { key: "turningUp",  label: "50-day avg turning up",   measure: "turningUp",    op: "flag", value: true },
+    // Any screen. Below its 200-day EMA a stock is almost never tradable
+    // (Matt, 2026-10-24). Worked out from daily closes once it is on screen.
+    { key: "aboveEma200", label: "Price above its 200-day EMA", measure: "aboveEma200", op: "flag", facts: true }
 ]
 
 function known(v) { return typeof v === "number" && isFinite(v) }
+
+// Ranked and value lists: tables rebuilt from every quote, not alert feeds.
+function listed(screen) { return !!screen && (screen.type === "ranked" || screen.type === "value") }
+// How many rows a list shows: its own `rankCount`, else 25 for a ranked
+// list and 50 for a long-term value list (the settings page shows the same).
+function rankCountOf(screen) {
+    return screen && screen.rankCount > 0 ? screen.rankCount : screen && screen.type === "value" ? 50 : 25
+}
 
 // Does row `r` pass the screen's filters? `stage` is "quote" (at alert
 // time) or "facts" (once look-ups have arrived).
@@ -106,6 +169,12 @@ function passes(screen, r, stage) {
         }
         if (!known(v)) {
             if (d.required) return false
+            // A ranked or value list is a table of what is known, not an
+            // alert waiting on a figure: a market-cap or price floor there
+            // keeps out a row whose cap or price is not known (warrants and
+            // thin listings with no cap passed Top Gainers' $10B floor,
+            // 2026-10-24). Alert screens still let an unknown figure through.
+            if ((d.key === "capMin" || d.key === "priceMin") && listed(screen)) return false
             continue
         }
         if (d.op === ">=" && !(v >= want)) return false
@@ -178,12 +247,39 @@ function deepValueFilters() { return { valueMin: 6, pfcfPass: 1, offHighMin: 15,
 // The rules the screen first shipped with, for updating saved copies.
 var deepValueFiltersV1 = { valueMin: 6, valuation: 1, above50: 1, below200: 1, turningUp: 1 }
 
+// Does this screen's board feed the theme and sector tally?
+function feedsThemes(s) {
+    if (typeof s.feedsThemes === "boolean") return s.feedsThemes
+    return s.type === "running" || s.type === "hod"
+}
+
 function load(cfg) {
     try {
         const list = JSON.parse(cfg.screens || "[]")
         if (Array.isArray(list) && list.length) return list
     } catch (e) {}
     return defaults(cfg)
+}
+
+// The theme board: themes and sectors ranked by heat, and the runners no
+// theme claims yet. No filters or scorecard; it reads the theme tally.
+function themeHunter(market) {
+    return { id: "hunter" + (market === "crypto" ? "c" : ""), name: market === "crypto" ? "Crypto Theme Hunter" : "Theme Hunter",
+             market: market || "stocks", type: "hunter", filters: {}, scorecard: "", sound: "" }
+}
+
+// Three to start crypto with, from Settings → Screeners. Crypto volume is in
+// dollars over 24 hours; $1M keeps out the pairs that barely trade.
+function cryptoStarters() {
+    const t = Date.now().toString(36)
+    return [
+        { id: "c" + t + "r", name: "Crypto Running Up", market: "crypto", type: "running",
+          runPct: 3, runWindow: 5, filters: { volumeMin: 1000000 }, scorecard: "", sound: "" },
+        { id: "c" + t + "h", name: "Crypto 24h High", market: "crypto", type: "hod",
+          filters: { changeMin: 5, volumeMin: 1000000 }, scorecard: "", sound: "" },
+        { id: "c" + t + "g", name: "Crypto Gainers", market: "crypto", type: "ranked",
+          rankBy: "change", rankCount: 25, filters: { volumeMin: 1000000 }, scorecard: "", sound: "" }
+    ]
 }
 
 function newId() {

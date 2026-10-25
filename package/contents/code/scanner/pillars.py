@@ -277,7 +277,10 @@ def analyse(ticker, quote=None):
         P.append(Pillar(3, "Share count", "decreasing",
                         f"{shares[0]/1e6:.0f}M → {shares[-1]/1e6:.0f}M",
                         shares[-1] < shares[0],
-                        f"{pct(shares[-1], shares[0]):+.1f}% over {len(shares)} years"))
+                        # A first count of zero has no percentage change (CEG,
+                        # 2026-10-24: it raised a TypeError and failed the company).
+                        f"{pct(shares[-1], shares[0]):+.1f}% over {len(shares)} years"
+                        if shares[0] else f"from zero over {len(shares)} years"))
     else:
         P.append(Pillar(3, "Share count", "decreasing", "not recorded", None, ""))
 
@@ -288,7 +291,8 @@ def analyse(ticker, quote=None):
             P.append(Pillar(n, label, "growing",
                             f"${vals[0]/1e9:.2f}B → ${vals[-1]/1e9:.2f}B",
                             grew(vals),
-                            f"{pct(vals[-1], vals[0]):+.0f}% over {len(vals)} years"))
+                            f"{pct(vals[-1], vals[0]):+.0f}% over {len(vals)} years"
+                            if vals[0] else f"from zero over {len(vals)} years"))
         else:
             P.append(Pillar(n, label, "growing", "not recorded", None, ""))
 

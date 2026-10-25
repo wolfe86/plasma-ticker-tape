@@ -33,9 +33,16 @@ HEADERS = {"User-Agent": UA, "Accept": "application/json"}
 ECON_QUERY_OFFSET = timedelta(days=1)
 FEED_TZ = timezone(timedelta(hours=-4))
 
-# A consensus a week out does not move; today's actuals do.
+# A consensus a week out does not move; today's actuals do; and a day two or
+# more days gone is final, so browsing back through a month costs nothing.
 TTL_AHEAD = 6 * 3600
 TTL_TODAY = 600
+TTL_PAST = 7 * 86400
+
+# Days fetched at once. A month view asks for ~35 days, two requests each;
+# one at a time that is three minutes, four at a time under a minute, and
+# still gentle on the feed.
+WORKERS = 4
 
 COUNTRY = "United States"
 
@@ -170,7 +177,9 @@ def _fetch(url, day):
     answer". Returning `[]` for both would show a dead feed as "Nothing
     scheduled" -- a confident claim about a day nobody had checked.
     """
-    ttl = TTL_AHEAD if day > date.today() else TTL_TODAY
+    today = date.today()
+    ttl = (TTL_AHEAD if day > today else
+           TTL_PAST if day < today - timedelta(days=1) else TTL_TODAY)
     try:
         body = cache.fetch(url, ttl, headers=HEADERS, timeout=25)
         data = (json.loads(body) or {}).get("data") or {}
@@ -239,6 +248,7 @@ def economic(day):
             "actual": _clean(r.get("actual")),
             "ticker": None, "session": None, "mcap": None, "surprise": None,
         }
+        ev["source"], ev["link"] = econ_link(family, name)
         # A row carrying a consensus is the one the desk quotes; prefer it when
         # two rows of a family tie on score.
         rank = (ev["score"], 1 if ev["expected"] else 0)
@@ -247,6 +257,55 @@ def economic(day):
     out = [ev for _, ev in best.values()]
     out.sort(key=lambda e: (-e["score"], e["when"] or datetime.max.replace(tzinfo=ET)))
     return out
+
+
+# Where to read the release itself: the publisher's own page for each family,
+# which always carries the newest release -- so once a figure prints, the link
+# is the press release behind it. Checked 2026-10-24; the BLS, DOL, Census,
+# Kansas City Fed and TreasuryDirect pages refuse scripted requests (403, 500,
+# timeouts), so those five were not confirmed by script and open in a browser.
+ECON_LINKS = {
+    "fed_decision": ("Federal Reserve", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
+    "fed_minutes":  ("Federal Reserve", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
+    "fed_speaker":  ("Federal Reserve", "https://www.federalreserve.gov/newsevents/speeches.htm"),
+    "cpi":          ("BLS", "https://www.bls.gov/cpi/"),
+    "jobs_report":  ("BLS", "https://www.bls.gov/news.release/empsit.nr0.htm"),
+    "ppi":          ("BLS", "https://www.bls.gov/ppi/"),
+    "pce":          ("BEA", "https://www.bea.gov/data/personal-consumption-expenditures-price-index"),
+    "gdp":          ("BEA", "https://www.bea.gov/data/gdp/gross-domestic-product"),
+    "retail":       ("Census Bureau", "https://www.census.gov/retail/index.html"),
+    "durables":     ("Census Bureau", "https://www.census.gov/manufacturing/m3/index.html"),
+    "housing":      ("Census Bureau", "https://www.census.gov/construction/nrc/index.html"),
+    "ism_mfg":      ("ISM", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/"),
+    "ism_svc":      ("ISM", "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/"),
+    "claims":       ("Department of Labor", "https://www.dol.gov/ui/data.pdf"),
+    "confidence":   ("The Conference Board", "https://www.conference-board.org/topics/us-consumer-confidence"),
+    "sentiment":    ("University of Michigan", "https://www.sca.isr.umich.edu/"),
+    "adp":          ("ADP", "https://adpemploymentreport.com/"),
+    "richmond":     ("Richmond Fed", "https://www.richmondfed.org/region_communities/regional_data_analysis/surveys/manufacturing"),
+    "philly_fed":   ("Philadelphia Fed", "https://www.philadelphiafed.org/surveys-and-data/regional-economic-analysis/manufacturing-business-outlook-survey"),
+    "empire":       ("New York Fed", "https://www.newyorkfed.org/survey/empire/empiresurvey_overview"),
+    "auction":      ("TreasuryDirect", "https://www.treasurydirect.gov/auctions/upcoming/"),
+    "bills":        ("TreasuryDirect", "https://www.treasurydirect.gov/auctions/upcoming/"),
+    "money_supply": ("Federal Reserve", "https://www.federalreserve.gov/releases/h6/current/default.htm"),
+}
+# The regional_fed family covers several banks; the name says which.
+REGIONAL_LINKS = [
+    (re.compile(r"dallas.*pce", re.I), ("Dallas Fed", "https://www.dallasfed.org/research/pce")),
+    (re.compile(r"dallas", re.I), ("Dallas Fed", "https://www.dallasfed.org/research/surveys/tmos")),
+    (re.compile(r"kc|kansas", re.I), ("Kansas City Fed", "https://www.kansascityfed.org/surveys/manufacturing-survey/")),
+    (re.compile(r"chicago", re.I), ("Chicago Fed", "https://www.chicagofed.org/research/data/cfnai/current-data")),
+]
+
+
+def econ_link(family, name):
+    """(publisher, url) for a release, or (None, None)."""
+    if family == "regional_fed":
+        for rx, link in REGIONAL_LINKS:
+            if rx.search(name or ""):
+                return link
+        return None, None
+    return ECON_LINKS.get(family, (None, None))
 
 
 SESSION = {"time-pre-market": "bmo", "time-after-hours": "amc"}
@@ -367,7 +426,65 @@ def day_events(day, watchlist=()):
 
 def week(start=None, days=7, watchlist=()):
     """[(date, [events])] from `start`, weekends included but usually empty."""
+    from concurrent.futures import ThreadPoolExecutor
     start = start or date.today()
-    return [(start + timedelta(days=i),
-             day_events(start + timedelta(days=i), watchlist))
-            for i in range(days)]
+    span = [start + timedelta(days=i) for i in range(days)]
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        return list(zip(span, pool.map(lambda d: day_events(d, watchlist), span)))
+
+
+# --- The earnings release itself --------------------------------------------
+#
+# A company files its results as an 8-K under Item 2.02, with the press
+# release attached as exhibit 99.1 -- or, a foreign private issuer, as a 6-K
+# carrying it. So once a reporter has printed, EDGAR has the release itself
+# -- not an article about it.
+
+def earnings_release(ticker, day):
+    """
+    The URL of `ticker`'s earnings press release filed on `day` (or up to two
+    days after, for a late-evening filing), or None. The exhibit when one is
+    named ex99; else the filing's index page, which lists it.
+    """
+    import dilution
+    cik = dilution.load_cik_map().get(ticker.upper())
+    if not cik:
+        return None
+    body = cache.fetch(f"https://data.sec.gov/submissions/CIK{cik}.json", 1800,
+                       fetcher=dilution._get)
+    recent = (json.loads(body) or {}).get("filings", {}).get("recent", {})
+    last = (day + timedelta(days=2)).isoformat()
+    forms = recent.get("form", [])
+    n = len(forms)
+    for form, filed, items, acc in zip(forms, recent.get("filingDate", []),
+                                       recent.get("items") or [""] * n, recent.get("accessionNumber", [])):
+        if not (day.isoformat() <= filed <= last):
+            continue
+        # A foreign private issuer (Eni, Infosys) files its results as a
+        # 6-K with no item numbers; the release is its exhibit 99.1, so a
+        # 6-K counts only when it carries one (2026-10-24).
+        foreign = form == "6-K"
+        if not foreign and (form != "8-K" or "2.02" not in (items or "")):
+            continue
+        folder = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}"
+        try:
+            idx = json.loads(cache.fetch(folder + "/index.json", 30 * 86400, fetcher=dilution._get))
+            # Exhibit names are the filer's own: a2026q4ex991-pressrelease.htm,
+            # q1fy27exhibit991er.htm, q4fy26earnings8-kexhibit.htm, exv99w01.htm.
+            names = [f.get("name", "") for f in idx.get("directory", {}).get("item", [])]
+            docs = [n for n in names if n.lower().endswith((".htm", ".html"))
+                    and not re.match(r"^R\d+\.htm$|.*index", n, re.I)]
+            for rx in (r"ex\w*99|99\w*ex",) if foreign else (r"ex\w*99|99\w*ex", r"exhibit|press|earn"):
+                hit = next((n for n in docs if re.search(rx, n, re.I)), None)
+                if hit:
+                    return f"{folder}/{hit}"
+        except Exception:
+            pass
+        if not foreign:
+            return f"{folder}/{acc}-index.htm"
+    # A 6-K filer whose release is not found as an exhibit (Eni's results
+    # 6-K carries none): its EDGAR page of 6-Ks, newest first.
+    if "6-K" in forms:
+        return (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}"
+                f"&type=6-K&dateb=&owner=include&count=40")
+    return None

@@ -72,7 +72,7 @@ The week's market-moving economic releases (CPI, jobs, Fed, PMI and more) with e
 
 ### New in 1.2 (beta)
 
-- **Themes and sectors (beta).** Each stock is matched to a theme, the tradeable story behind it (one of yours, by its newest headline's words or a ticker you pin), or else to its sector. Each is scored hot, building, quiet or burnt from what its members actually did. Set them up in **Settings → Themes**; right-click a screener row to make a theme from its headline, pin the ticker to one, or set its sector.
+- **Themes and sectors (beta).** Each stock is matched to a theme, the tradeable story behind it (one of yours, by its newest headline's words or a ticker you pin), or else to its sector. Each is scored hot, building, quiet or burnt from what its members actually did. Set them up in **Settings → Themes**; right-click a screener row to make a theme from its headline, pin the ticker to one, or set its sector. **How they work, how to write headline words and how to read the heat is in [docs/themes.md](docs/themes.md).**
 - **The Theme column.** One column on the screener: the theme's glyph when the stock has one, else its sector's, coloured by how hot it is. Hover it for why. Sort it to put the hottest first.
 - **Theme Hunter (beta).** A screen of its own: hot themes, hot sectors, and the runners no theme claims yet: runners under a heating sector that share a headline are the next theme to define.
 - **Crypto screens.** Crypto Running Up, Crypto 24h High and Crypto Gainers watch Coinbase pairs around the clock. Add them from **Settings → Screeners**.
@@ -80,9 +80,13 @@ The week's market-moving economic releases (CPI, jobs, Fed, PMI and more) with e
 - **Performance presets.** **Settings → Performance**: *Full* (every stock every pass, for a desktop), *Balanced*, or *Light* (a laptop or a metered connection), or set each control yourself.
 - **Scorecards know themes.** A scorecard rule can test the row's theme or sector: its heat, how many members it has today, how many ran.
 
-| Calendar | News |
-|---|---|
-| ![Calendar](docs/screenshots/calendar.png) | ![News](docs/screenshots/news.png) |
+| Calendar: day | Calendar: week | Calendar: month |
+|---|---|---|
+| ![The calendar's day view: releases in time order, then the reporters](docs/screenshots/calendar.png) | ![The calendar's week view: Monday to Friday side by side](docs/screenshots/calendar-week.png) | ![The calendar's month view: a grid with importance dots](docs/screenshots/calendar-month.png) |
+
+| News |
+|---|
+| ![The News tab: market desks and headlines for the stocks on your screens, as cards](docs/screenshots/news.png) |
 
 ---
 
@@ -137,7 +141,7 @@ Right-click the tape → **Configure Plasma Ticker Tape…**
 | **Symbols** | Your watchlist. Search to add, ★ to put on the tape, drag to reorder |
 | **Screeners** | The stock pool, and every screen: type, trigger, filters, scorecard and sound |
 | **Scorecards** | Named rule sets, for example *price $2–$20, up 10%+, relative volume 5×+, float under 20M, news today* |
-| **Themes** (beta) | Your themes and sectors: their words, pinned tickers and icons, and how heat is scored |
+| **Themes** (beta) | Your themes and sectors: their words, pinned tickers and icons, and how heat is scored. See [docs/themes.md](docs/themes.md) |
 | **Tape** | Scroll speed, width, refresh rate, the VIX fear line |
 | **Performance** | How often the widget asks for data, and how much: Full, Balanced, Light or Custom |
 | **Data** | Where the data comes from, and which earnings you care about (below) |
@@ -148,7 +152,13 @@ Right-click the tape → **Configure Plasma Ticker Tape…**
 
 | Tape | About |
 |---|---|
-| ![Settings → Tape: scroll speed, width, refresh and the VIX fear line](docs/screenshots/settings-tape.png) | ![Settings → About](docs/screenshots/settings-about.png) |
+| ![Settings → Tape: scroll speed, width, refresh, the VIX fear line and the theme tickers on the tape](docs/screenshots/settings-tape.png) | ![Settings → About: the version, licence and links](docs/screenshots/settings-about.png) |
+
+| Themes (beta) | Performance |
+|---|---|
+| ![Settings → Themes: your themes, each with its glyph, headline words and pinned tickers](docs/screenshots/themes-custom.png) | ![Settings → Performance: the presets and how often each check runs](docs/screenshots/settings-performance.png) |
+
+The theme settings are explained in the [themes guide](docs/themes.md).
 
 ### Data
 
@@ -215,7 +225,7 @@ package/
     └── code/
         ├── scannerbridge.py   what the widget calls; prints one line of JSON
         └── scanner/           the data gathering: lists, Finviz, SEC, calendar, news
-tests/                         offline checks, run with python3 tests/test_glyphs.py
+tests/                         offline checks: icons, the scanner bridge and documentation links
 ```
 
 The tape, the screener and the news search talk to their sources directly from QML (Yahoo Finance, CoinGecko, Coinbase, Google News). The scanner's lists, Finviz, SEC EDGAR, the calendar and the headline feeds go through `scannerbridge.py`. You can run it by hand to see exactly what the widget gets:
@@ -232,9 +242,10 @@ The `""` means the built-in scanner. Any failure prints `{"error": …}`, and th
 
 ```bash
 python3 tests/test_glyphs.py
+python3 tests/test_docs.py
 ```
 
-Checks that every icon in the library is valid SVG, that every theme and sector points at an icon that exists, and that the scanner bridge compiles and reports errors as JSON. The icon checks need [Node.js](https://nodejs.org/) and are skipped without it. The tests run offline; they do not call any data source.
+`test_glyphs.py` checks that every icon in the library is valid SVG, that every theme and sector points at an icon that exists, and that the scanner bridge compiles and reports errors as JSON. Its icon checks need [Node.js](https://nodejs.org/) and are skipped without it. `test_docs.py` checks that every image and link in the documentation points at a file that exists. The tests run offline; they do not call any data source.
 
 ### Troubleshooting
 

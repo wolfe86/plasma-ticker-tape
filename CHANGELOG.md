@@ -2,7 +2,7 @@
 
 Newest first. Versions follow `package/metadata.json`.
 
-## 1.2.0 (beta), not yet released
+## 1.2.0 (beta)
 
 The first release after 1.0.1. Everything below is the 1.2 work.
 
@@ -17,6 +17,8 @@ The first release after 1.0.1. Everything below is the 1.2 work.
 - **Currencies** on any screen: US dollars, euros, pounds, yen, Canadian and Australian dollars, Swiss francs, bitcoin or ether.
 - **Performance presets**: Full, Balanced, Light or Custom.
 - **Filings link** on each stock's card: opens its filings on BamSEC.
+- **Theme guide** in [docs/themes.md](docs/themes.md): setting up a theme, how a stock joins one, how the heat is read, and the tape settings.
+- **Screenshots** of the 1.2 calendar (day, week and month), news, themes and tape settings.
 
 ### Changed
 - The news list on a stock's card uses the same card layout as the News tab.
@@ -28,6 +30,7 @@ The first release after 1.0.1. Everything below is the 1.2 work.
 - Crypto symbols that Coinbase does not list (Monero, for example) now resolve through Yahoo.
 - Crypto icons no longer depend on a live lookup each time the widget starts.
 - The scanner bridge prints a usage message when run without arguments, instead of a Python error.
+- Screener rows keep their place while live data updates, instead of jumping to the top or flickering once a second.
 
 ## 1.0.1
 

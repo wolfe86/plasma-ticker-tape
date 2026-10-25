@@ -3,6 +3,9 @@
 // earnings the calendar lists. Passed to the scanner as environment
 // variables on every call (ScreenerEngine.qml, `bridgeRun`).
 //
+// TradingView: which chart its windows load, and signing in to it (the
+// sign-in itself happens on TradingView's page, in a TradingView window).
+//
 // And your own news sources (newsfeeds.js): RSS, Atom or a JSON API, each
 // with an optional request header for a paid feed's key, and a Test button.
 
@@ -12,11 +15,13 @@ import QtQuick.Dialogs
 import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import org.kde.kcmutils as KCM
+import org.kde.plasma.plasmoid
 import "newsfeeds.js" as NewsFeeds
 
 KCM.SimpleKCM {
     id: page
     property alias cfg_scannerDir: scannerDir.text
+    property string cfg_tvMode
     property string cfg_newsSources: ""
     property alias cfg_newsBuiltins: builtins.checked
     property alias cfg_newsImages: newsImages.checked
@@ -127,6 +132,47 @@ KCM.SimpleKCM {
             font: Kirigami.Theme.smallFont
             opacity: 0.7
         }
+
+        Item { Kirigami.FormData.isSection: true; Kirigami.FormData.label: i18n("TradingView") }
+        QQC2.ComboBox {
+            Kirigami.FormData.label: i18n("TradingView windows:")
+            implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+            model: [i18n("Full chart page (sign-in optional)"), i18n("Embedded chart (no account)")]
+            currentIndex: page.cfg_tvMode === "widget" ? 1 : 0
+            onActivated: index => page.cfg_tvMode = index === 1 ? "widget" : "page"
+            QQC2.ToolTip.text: i18n("The full page is TradingView's own chart, with every indicator and drawing tool; signed in, it keeps your saved layouts. The embedded chart is TradingView's free widget and needs no account.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+        }
+        RowLayout {
+            Kirigami.FormData.label: i18n("TradingView account:")
+            visible: page.cfg_tvMode !== "widget"
+            QQC2.Button {
+                icon.name: "im-user-online"
+                text: i18n("Sign in to TradingView…")
+                // Asks the widget to open a TradingView window on its sign-in
+                // page; this page cannot open windows of its own.
+                onClicked: Plasmoid.configuration.tvSignInRequest = String(Date.now())
+                QQC2.ToolTip.text: i18n("Opens TradingView's own sign-in page in a TradingView window. Sign in there; the window returns to the chart. Optional: the charts work without an account.")
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+            }
+            QQC2.Label {
+                readonly property string u: Plasmoid.configuration ? String(Plasmoid.configuration.tvUser) : "?"
+                text: u === "?" ? i18n("Not checked yet") : u === "" ? i18n("Not signed in")
+                      : u === "yes" ? i18n("Signed in") : i18n("Signed in as %1", u)
+                opacity: 0.7
+            }
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+            wrapMode: Text.WordWrap
+            font: Kirigami.Theme.smallFont
+            opacity: 0.7
+            text: i18n("Open a TradingView window with the TradingView button in the pop-up's header, or the TV button above a quote card's chart. To sign in, use the button above or the Sign in button in that window: it opens TradingView's own sign-in page. The widget never sees or saves your password; TradingView's session is kept in the widget's own browser storage, so it lasts across restarts. Needs Qt WebEngine (qt6-webengine; qml6-module-qtwebengine on Debian). TradingView's terms apply to its charts.")
+        }
+
 
         Item {
             Kirigami.FormData.isSection: true

@@ -22,6 +22,13 @@
 // times and prices, so it stays put through zooming and bar-size changes.
 // The price scale on the right: the wheel stretches it, dragging moves it,
 // a double-click fits it to the bars again.
+//
+// The card follows its `entry`: a symbol typed into its look-up box, or one
+// of the recent tickers under the title, opens in place (`go`), and a chart
+// window bound to the active ticker reloads when it changes. With
+// `chartOnly` it is just the chart and its controls, for the chart windows
+// (ChartWindow.qml). The bars reload every `chartRefreshSeconds` while the
+// card is on screen, keeping the view on the newest bar unless it was moved.
 
 import QtQuick
 import QtQuick.Layouts
@@ -41,6 +48,17 @@ ColumnLayout {
     required property var ticker
     required property var entry       // {symbol, label, name, star} from settings
     signal back()
+    // Another symbol, to open in this card's place.
+    signal go(var entry)
+    readonly property var ws: ticker.workspace
+    // Just the chart, its price line and its controls (a chart window).
+    property bool chartOnly: false
+    // The card in a quote window (ChartWindow.qml, kind "quote"): no chart
+    // (the chart windows have it), no back button and no pop-out button.
+    property bool inWindow: false
+    // In a quote window: whether it follows the active ticker, so a chart
+    // opened from it does too (unlinked, the chart keeps this symbol).
+    property bool linked: true
 
     readonly property var f: ticker.feed(entry.symbol)
     readonly property var m: f.meta || ({})
@@ -152,10 +170,15 @@ ColumnLayout {
     property bool failed: false
     property var request: null
 
-    function load() {
+    // `keep`: a refresh of the same range -- the view stays where it was,
+    // moving on with the newest bar if it was showing it, and a failed
+    // refresh keeps the bars it has.
+    function load(keep) {
+        if (inWindow) return
         if (request) request.abort()
         const r = ranges[rangeIndex]
         const x = new XMLHttpRequest()
+        const was = keep && fullCount > 1 ? { from: viewFrom, count: viewCount, total: fullCount } : null
         request = x
         loading = true
         failed = false
@@ -202,10 +225,20 @@ ColumnLayout {
                     n = t.filter(x => x >= from).length
                 }
                 n = Math.max(Math.min(minBars, c.length), n)
-                viewCount = n
-                viewFrom = c.length - n
+                if (was) {
+                    // At the newest bar: stay there as bars arrive. Moved
+                    // back: stay on the same bars.
+                    const atEnd = was.from + was.count >= was.total - 1
+                    n = Math.max(Math.min(minBars, c.length), Math.min(c.length, was.count))
+                    viewCount = n
+                    viewFrom = atEnd ? Math.max(0, c.length - n) : Math.max(0, Math.min(c.length - Math.min(keepBars, c.length), was.from))
+                } else {
+                    viewCount = n
+                    viewFrom = c.length - n
+                }
                 full = { t: t, o: o, h: h, l: l, c: c, v: vo, w: vw }
             } catch (e) {
+                if (was) return
                 // A Coinbase pair Yahoo does not chart: Coinbase's own candles.
                 if (ticker.screener.isCryptoSymbol(entry.symbol)) { loadCoinbase(r); return }
                 failed = true
@@ -220,6 +253,15 @@ ColumnLayout {
         x.send()
     }
     onRangeIndexChanged: { autoScale = true; load() }
+    // Live bars: reloaded while the card is on screen. Coinbase-only pairs
+    // reload whole, as they were drawn.
+    Timer {
+        interval: Math.max(5, Plasmoid.configuration.chartRefreshSeconds) * 1000
+        repeat: true
+        running: Plasmoid.configuration.chartRefreshSeconds > 0 && detail.visible && !detail.inWindow
+                 && !!detail.Window.window && detail.Window.window.visible && detail.tab === 0
+        onTriggered: if (!detail.loading) detail.load(true)
+    }
 
     // ── Coinbase candles ──
     // For crypto pairs Yahoo has no chart for. Coinbase's public candles
@@ -396,9 +438,35 @@ ColumnLayout {
     readonly property bool onWatchlist: ticker.symbols.some(s => s.symbol === entry.symbol)
     function refresh() {
         if (!onWatchlist) ticker.fetch(entry.symbol)
-        loadSummary()
+        if (!chartOnly) loadSummary()
     }
-    Component.onCompleted: { load(); refresh(); loadLevels(); if (f.type === "EQUITY") loadDilution(); loadAbout() }
+    // Everything for the symbol in `entry`, from scratch: on opening, and
+    // again whenever the entry changes to another symbol.
+    property string loadedSymbol: ""
+    function reloadAll() {
+        if (!entry || !entry.symbol) return
+        loadedSymbol = entry.symbol
+        if (request) { request.abort(); request = null }
+        full = { t: [], o: [], h: [], l: [], c: [], v: [], w: [] }
+        viewFrom = 0; viewCount = 0
+        autoScale = true; failed = false
+        drawing = false; pending = null
+        summary = null; summaryFailed = false; summaryRetried = false; cryptoText = ""
+        news = []; newsSource = ""; newsFailed = false; newsLoading = false
+        dil = null; localValue = null; valueLoading = false
+        optIv = null; earnMove = null; optLines = null
+        about.expanded = false
+        if (entry.tab !== undefined && !chartOnly) tab = entry.tab
+        load(); refresh(); loadLevels()
+        if (!chartOnly) {
+            if (f.type === "EQUITY") loadDilution()
+            loadAbout()
+            if (tab === 1) loadNews()
+        }
+        loadOptions()
+    }
+    onEntryChanged: if (entry && entry.symbol !== loadedSymbol) reloadAll()
+    Component.onCompleted: if (loadedSymbol === "") reloadAll()
     Timer {
         interval: detail.ticker.pollSeconds * 1000
         running: true
@@ -412,13 +480,45 @@ ColumnLayout {
     // screener may already hold it; otherwise it is asked for once.
     property var dil: null
     readonly property string kind: f.type || ""
-    onKindChanged: { if (kind === "EQUITY" && !dil) loadDilution(); loadAbout() }
+    onKindChanged: { loadOptions(); if (chartOnly) return; if (kind === "EQUITY" && !dil) loadDilution(); loadAbout() }
+
+    // ── options readings ─────────────────────────────────────────────────
+    // For a stock or fund: its at-the-money IV and IV rank and the move
+    // priced in through its next earnings, in the figures; and, with
+    // `chartOptionLines`, its biggest open-interest strikes and max pain on
+    // the chart. From Yahoo's chain, delayed (Workspace.qml).
+    readonly property bool optionable: kind === "EQUITY" || kind === "ETF"
+    property var optIv: null
+    property var earnMove: null
+    property var optLines: null
+    readonly property real earningsAt: {
+        const e = summary && summary.calendarEvents && summary.calendarEvents.earnings
+        const d = e && e.earningsDate && e.earningsDate[0]
+        return d && typeof d.raw === "number" ? d.raw * 1000 : NaN
+    }
+    onEarningsAtChanged: if (optionable && !chartOnly) { const sym = entry.symbol; ws.earningsMove(sym, earningsAt, m => { if (current(sym)) detail.earnMove = m }) }
+    function loadOptions() {
+        if (!optionable) return
+        const sym = entry.symbol
+        if (!chartOnly) ws.ivInfo(sym, x => { if (current(sym)) detail.optIv = x })
+        if (Plasmoid.configuration.chartOptionLines) ws.optionLevels(sym, x => { if (current(sym)) detail.optLines = x })
+    }
+    Connections {
+        target: Plasmoid.configuration
+        function onChartOptionLinesChanged() { if (Plasmoid.configuration.chartOptionLines) detail.loadOptions(); else detail.optLines = null }
+    }
+    // A reply still for this card: the card is open and on the same symbol.
+    // Since a card opens another symbol in place, a slow reply for the last
+    // one must not land on the new one, nor on a card that has closed.
+    function current(sym) {
+        try { return !!detail && !!detail.entry && detail.entry.symbol === sym } catch (e) { return false }
+    }
     function loadDilution() {
         const sym = entry.symbol
         const known = ticker.screener.info[sym]
         if (known && known.dilution) { dil = known.dilution; return }
         if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym)) return
-        ticker.screener.bridgeRun(["dilution", sym], out => { if (out && out[sym]) dil = out[sym] }, 60, true)
+        ticker.screener.bridgeRun(["dilution", sym], out => { if (current(sym) && out && out[sym]) detail.dil = out[sym] }, 60, true)
     }
 
     property int tab: 0
@@ -438,15 +538,19 @@ ColumnLayout {
     readonly property string aboutText: (summary && summary.assetProfile
                                          ? String(summary.assetProfile.longBusinessSummary || "") : "") || cryptoText
     function loadAbout() {
-        if (kind === "CRYPTOCURRENCY") ticker.screener.cryptoAbout(entry.symbol, t => cryptoText = t)
+        const sym = entry.symbol
+        if (kind === "CRYPTOCURRENCY") ticker.screener.cryptoAbout(sym, t => { if (current(sym)) detail.cryptoText = t })
     }
 
     function loadSummary() {
+        const sym = entry.symbol
         ticker.withCrumb(c => {
+            if (!current(sym)) return
             ticker.yget("https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
-                        + encodeURIComponent(entry.symbol)
+                        + encodeURIComponent(sym)
                         + "?modules=summaryDetail,defaultKeyStatistics,financialData,calendarEvents,assetProfile"
                         + "&crumb=" + encodeURIComponent(c), x => {
+                if (!current(sym)) return
                 if (x.status === 401 && !summaryRetried) {
                     // Crumb expired: fetch a fresh one, once.
                     summaryRetried = true
@@ -499,6 +603,11 @@ ColumnLayout {
                 [i18n("PE Ratio (TTM)"), v(sd, "trailingPE")],
                 [i18n("EPS (TTM)"), v(ks, "trailingEps")],
                 [i18n("Earnings Date"), earn],
+                [i18n("Earnings Move (priced in)"), earnMove ? "±$" + earnMove.dollars.toFixed(2) + " (" + earnMove.pct.toFixed(1) + "%) "
+                                                    + i18n("by %1", Qt.formatDate(new Date(earnMove.expiry), "d MMM")) : ""],
+                [i18n("Implied Volatility"), optIv ? (optIv.iv * 100).toFixed(1) + "%" : ""],
+                [i18n("IV Rank (1 year)"), !optIv ? "" : isFinite(optIv.rank) ? String(Math.round(optIv.rank))
+                                           : i18np("after 20 days (1 recorded)", "after 20 days (%1 recorded)", optIv.days)],
                 [i18n("Forward Dividend & Yield"), pair(v(sd, "dividendRate"), v(sd, "dividendYield") && "(" + v(sd, "dividendYield") + ")", " ")],
                 [i18n("Ex-Dividend Date"), v(sd, "exDividendDate")],
                 [i18n("Yield"), v(sd, "yield")],
@@ -563,7 +672,9 @@ ColumnLayout {
         const scanner = (kind === "EQUITY" || kind === "ETF")
                         && /^[A-Za-z0-9.\-]{1,12}$/.test(entry.symbol)
         if (!scanner) { loadGoogleNews(); return }
-        ticker.screener.bridgeRun(["tickernews", entry.symbol], out => {
+        const sym = entry.symbol
+        ticker.screener.bridgeRun(["tickernews", sym], out => {
+            if (!detail.current(sym)) return
             let rows = (Array.isArray(out) ? out : []).filter(n => n.title && n.link)
             // The scanner flags whether each headline is about the company.
             // For a big name the rest is mostly other companies' coverage
@@ -604,9 +715,11 @@ ColumnLayout {
     function loadGoogleNews() {
         newsLoading = true
         newsFailed = false
+        const sym = entry.symbol
         ticker.yget("https://news.google.com/rss/search?q="
                     + encodeURIComponent(newsQuery() + " when:7d")
                     + googleEdition(), x => {
+            if (!current(sym)) return
             newsLoading = false
             const items = String(x.responseText || "").split("<item>").slice(1).map(it => {
                 const get = tag => { const r = it.match(new RegExp("<" + tag + "[^>]*>([\\s\\S]*?)</" + tag + ">")); return r ? decode(r[1]).trim() : "" }
@@ -672,8 +785,10 @@ ColumnLayout {
 
     // ── title row ───────────────────────────────────────────────────────
     RowLayout {
+        visible: !detail.chartOnly
         Layout.fillWidth: true
         PlasmaComponents3.ToolButton {
+            visible: !detail.inWindow
             icon.name: "go-previous"
             onClicked: detail.back()
             PlasmaComponents3.ToolTip { text: i18n("Back") }
@@ -780,6 +895,21 @@ ColumnLayout {
             }
             PlasmaComponents3.ToolTip { text: i18n("Add to the watchlist") }
         }
+        // On the watchlist: on the tape or not, and off the list again.
+        readonly property var listed: detail.ticker.symbols.find(s => s.symbol === detail.entry.symbol) || null
+        PlasmaComponents3.ToolButton {
+            visible: !!parent.listed
+            icon.name: parent.listed && parent.listed.star ? "starred-symbolic" : "non-starred-symbolic"
+            icon.color: parent.listed && parent.listed.star ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.textColor
+            onClicked: detail.ticker.setStar(detail.entry.symbol, !parent.listed.star)
+            PlasmaComponents3.ToolTip { text: parent.parent.listed && parent.parent.listed.star ? i18n("On the tape: click to take it off (it stays on the watchlist)") : i18n("Put it on the tape") }
+        }
+        PlasmaComponents3.ToolButton {
+            visible: !!parent.listed
+            icon.name: "list-remove"
+            onClicked: detail.ticker.removeSymbol(detail.entry.symbol)
+            PlasmaComponents3.ToolTip { text: i18n("Remove from the watchlist") }
+        }
         // For a stock: its filings on BamSEC -- shelf registrations (S-3),
         // offering prospectuses (424B) and the rest. A ticker search opens
         // straight on the company when the ticker is unique, else on the list
@@ -798,11 +928,56 @@ ColumnLayout {
         }
     }
 
+    // ── another symbol ──────────────────────────────────────────────────
+    // Type a symbol to open it here, or pick one of the recent tickers. The
+    // card shown is the active ticker, which unpinned chart windows follow.
+    RowLayout {
+        visible: !detail.chartOnly
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+        Layout.rightMargin: Kirigami.Units.largeSpacing
+        spacing: Kirigami.Units.smallSpacing
+        PlasmaComponents3.TextField {
+            id: goField
+            Layout.preferredWidth: Kirigami.Units.gridUnit * 7
+            placeholderText: i18n("Symbol…")
+            onAccepted: {
+                const typed = text
+                text = ""
+                detail.ws.resolve(typed, e => detail.go(e))
+            }
+            PlasmaComponents3.ToolTip { text: i18n("Type a symbol and press Enter to open it here: AIRE, ^GSPC, BTC") }
+        }
+        Flow {
+            Layout.fillWidth: true
+            spacing: 0
+            Repeater {
+                model: detail.ws.recent.filter(r => r.symbol !== detail.entry.symbol)
+                PlasmaComponents3.ToolButton {
+                    required property var modelData
+                    text: String(modelData.label || modelData.symbol).replace(/^\^/, "")
+                    font: Kirigami.Theme.smallFont
+                    onClicked: detail.go({ symbol: modelData.symbol, label: modelData.label || modelData.symbol,
+                                           name: modelData.name || modelData.symbol, star: false })
+                    PlasmaComponents3.ToolTip { text: parent.modelData.name || parent.modelData.symbol }
+                }
+            }
+        }
+    }
+
     // ── price and change ────────────────────────────────────────────────
     RowLayout {
         Layout.fillWidth: true
         Layout.leftMargin: Kirigami.Units.largeSpacing
         spacing: Kirigami.Units.largeSpacing
+        // In a chart window the title row is hidden: the symbol leads here.
+        PlasmaComponents3.Label {
+            visible: detail.chartOnly
+            textFormat: Text.PlainText
+            text: String(detail.entry.label || detail.entry.symbol)
+            font.bold: true
+            font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.4
+        }
         PlasmaComponents3.Label {
             text: detail.known ? detail.num(detail.f.value) : "--"
             font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.8
@@ -848,7 +1023,7 @@ ColumnLayout {
     // 2026-08-27 (56 days ago) · serial issuer". Clicking opens EDGAR.
     PlasmaComponents3.Label {
         id: dilLine
-        visible: detail.dil !== null && detail.dil.risk !== "UNKNOWN"
+        visible: !detail.chartOnly && detail.dil !== null && detail.dil.risk !== "UNKNOWN"
         Layout.fillWidth: true
         Layout.leftMargin: Kirigami.Units.largeSpacing
         Layout.rightMargin: Kirigami.Units.largeSpacing
@@ -881,28 +1056,63 @@ ColumnLayout {
 
     // ── tabs ────────────────────────────────────────────────────────────
     PlasmaComponents3.TabBar {
+        visible: !detail.chartOnly
         Layout.fillWidth: true
         currentIndex: detail.tab
         onCurrentIndexChanged: detail.tab = currentIndex
         PlasmaComponents3.TabButton { text: i18n("Overview") }
         PlasmaComponents3.TabButton { text: i18n("News") }
+        PlasmaComponents3.TabButton { text: i18n("Options"); enabled: detail.optionable }
+        PlasmaComponents3.TabButton {
+            readonly property int n: detail.ws.notes.filter(x => x.symbol === detail.entry.symbol).length
+            text: n ? i18n("Notes (%1)", n) : i18n("Notes")
+        }
+    }
+    Loader {
+        active: detail.tab === 2 && detail.optionable && !detail.chartOnly
+        visible: active
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+        Layout.rightMargin: Kirigami.Units.largeSpacing
+        sourceComponent: OptionsView {
+            ticker: detail.ticker
+            symbol: detail.entry.symbol
+            price: detail.f.value > 0 ? detail.f.value : NaN
+            earningsAt: detail.earningsAt
+        }
+    }
+    Loader {
+        active: detail.tab === 3 && !detail.chartOnly
+        visible: active
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+        Layout.rightMargin: Kirigami.Units.largeSpacing
+        sourceComponent: NotesView { ws: detail.ws; symbol: detail.entry.symbol }
     }
 
     // ── about the company ───────────────────────────────────────────────
-    // Yahoo's business summary: two lines, a click shows the rest.
+    // Yahoo's business summary: its first sentence, cut at `aboutChars`
+    // (Settings → Workspace; 0 = two lines); a click shows the rest.
+    readonly property string aboutShort: {
+        const t = aboutText, n = Plasmoid.configuration.aboutChars
+        if (!(n > 0)) return t
+        const m = t.match(/^.*?[.!?](?=\s+[A-Z]|$)/)
+        const first = m ? m[0] : t
+        return first.length <= n ? first : first.slice(0, n).replace(/\s+\S*$/, "") + "…"
+    }
     PlasmaComponents3.Label {
         id: about
-        visible: detail.tab === 0 && detail.aboutText.length > 0
+        visible: !detail.chartOnly && detail.tab === 0 && detail.aboutText.length > 0
         Layout.fillWidth: true
         Layout.leftMargin: Kirigami.Units.largeSpacing
         Layout.rightMargin: Kirigami.Units.largeSpacing
         textFormat: Text.PlainText
-        text: detail.aboutText
+        text: expanded ? detail.aboutText : detail.aboutShort
         wrapMode: Text.WordWrap
         font: Kirigami.Theme.smallFont
         opacity: 0.8
         elide: Text.ElideRight
-        maximumLineCount: expanded ? 999 : 2
+        maximumLineCount: expanded || Plasmoid.configuration.aboutChars > 0 ? 999 : 2
         property bool expanded: false
         MouseArea {
             anchors.fill: parent
@@ -913,7 +1123,7 @@ ColumnLayout {
 
     // ── range buttons ───────────────────────────────────────────────────
     RowLayout {
-        visible: detail.tab === 0
+        visible: detail.tab === 0 && !detail.inWindow
         Layout.alignment: Qt.AlignHCenter
         spacing: 0
         Repeater {
@@ -931,7 +1141,7 @@ ColumnLayout {
         }
     }
     RowLayout {
-        visible: detail.tab === 0
+        visible: detail.tab === 0 && !detail.inWindow
         Layout.alignment: Qt.AlignHCenter
         spacing: 0
         PlasmaComponents3.ToolButton {
@@ -949,6 +1159,19 @@ ColumnLayout {
             checked: detail.drawing
             onClicked: detail.drawing = !detail.drawing
             PlasmaComponents3.ToolTip { text: i18n("Draw a trend line: click two points. Double-click the chart to add a price level; right-click removes the nearest level or line.") }
+        }
+        // A chart of its own window, at this bar size, following the active
+        // ticker; and TradingView's chart in a window.
+        PlasmaComponents3.ToolButton {
+            icon.name: "window-new"
+            onClicked: detail.ws.openChart("chart", "", detail.ranges[detail.rangeIndex].key)
+            PlasmaComponents3.ToolTip { text: i18n("Open this chart in a window of its own. It follows the symbol you open next; pin it to keep this one.") }
+        }
+        PlasmaComponents3.ToolButton {
+            text: i18n("TV")
+            icon.name: "office-chart-line-stacked"
+            onClicked: detail.ws.openChart("tv", "", detail.ranges[detail.rangeIndex].key)
+            PlasmaComponents3.ToolTip { text: i18n("Open TradingView's chart for this symbol in a window, with its own indicators and drawing tools") }
         }
         Kirigami.Separator { Layout.fillHeight: true }
         Repeater {
@@ -969,7 +1192,7 @@ ColumnLayout {
     // Overlays: EMAs in their line colours, VWAP and volume. Remembered for
     // every chart.
     RowLayout {
-        visible: detail.tab === 0
+        visible: detail.tab === 0 && !detail.inWindow
         Layout.alignment: Qt.AlignHCenter
         spacing: 0
         PlasmaComponents3.Label { text: i18n("EMA"); opacity: 0.7; font: Kirigami.Theme.smallFont }
@@ -1004,6 +1227,14 @@ ColumnLayout {
             PlasmaComponents3.ToolTip { text: detail.minuteBars ? i18n("Volume-weighted average price, from each day's first traded bar") : i18n("VWAP needs minute or hour bars") }
         }
         PlasmaComponents3.ToolButton {
+            visible: detail.optionable
+            text: i18n("OI")
+            checkable: true
+            checked: Plasmoid.configuration.chartOptionLines
+            onClicked: Plasmoid.configuration.chartOptionLines = !Plasmoid.configuration.chartOptionLines
+            PlasmaComponents3.ToolTip { text: i18n("Options: the three strikes with the most open interest and the max-pain strike, for the nearest expiry a week or more out (Yahoo, delayed)") }
+        }
+        PlasmaComponents3.ToolButton {
             text: i18n("Volume")
             checkable: true
             checked: Plasmoid.configuration.chartVolume
@@ -1014,8 +1245,9 @@ ColumnLayout {
 
     // ── the chart ───────────────────────────────────────────────────────
     Item {
-        visible: detail.tab === 0
+        visible: detail.tab === 0 && !detail.inWindow
         Layout.fillWidth: true
+        Layout.fillHeight: detail.chartOnly
         Layout.preferredHeight: Kirigami.Units.gridUnit * 16
 
         Canvas {
@@ -1074,6 +1306,7 @@ ColumnLayout {
                 function onEmasChanged() { chart.requestPaint() }
                 function onShowVwapChanged() { chart.requestPaint() }
                 function onShowVolumeChanged() { chart.requestPaint() }
+                function onOptLinesChanged() { chart.requestPaint() }
             }
 
             onPaint: {
@@ -1119,6 +1352,19 @@ ColumnLayout {
                     if (lv < lo || lv > hi) continue
                     const yl = Math.round(py(lv)) + 0.5
                     ctx.beginPath(); ctx.moveTo(0, yl); ctx.lineTo(plotRight, yl); ctx.stroke()
+                }
+
+                // Options: open-interest strikes and max pain, dash-dotted.
+                if (detail.optLines) {
+                    ctx.strokeStyle = "#a78bfa"
+                    ctx.lineWidth = 1
+                    ctx.setLineDash([6, 3, 1, 3])
+                    for (const k of detail.optLines.levels.map(x => x.strike).concat(isFinite(detail.optLines.pain) ? [detail.optLines.pain] : [])) {
+                        if (k < lo || k > hi) continue
+                        const yk = Math.round(py(k)) + 0.5
+                        ctx.beginPath(); ctx.moveTo(0, yk); ctx.lineTo(plotRight, yk); ctx.stroke()
+                    }
+                    ctx.setLineDash([])
                 }
 
                 // Baseline, dashed: previous close on 1D, range start otherwise.
@@ -1384,6 +1630,20 @@ ColumnLayout {
                 }
             }
         }
+        // Each option line's label at the left edge: "OI 350 (12K)", "max pain 345".
+        Repeater {
+            model: !detail.optLines ? [] : detail.optLines.levels.map(x => ({ k: x.strike, t: i18n("OI %1 (%2)", x.strike, x.total >= 1000 ? (x.total / 1000).toFixed(0) + "K" : x.total) }))
+                                     .concat(isFinite(detail.optLines.pain) ? [{ k: detail.optLines.pain, t: i18n("max pain %1", detail.optLines.pain) }] : [])
+            PlasmaComponents3.Label {
+                required property var modelData
+                visible: chart.p.length > 1 && modelData.k >= chart.lo && modelData.k <= chart.hi
+                x: 2
+                y: Math.round(chart.py(modelData.k)) - height
+                text: modelData.t
+                color: "#a78bfa"
+                font: Kirigami.Theme.smallFont
+            }
+        }
         Rectangle {
             visible: hover.overBar
             x: hover.active ? Math.round(chart.px(hover.bar)) : 0
@@ -1467,6 +1727,44 @@ ColumnLayout {
         }
     }
 
+    // ── pop the card out ──
+    // Under the chart, at the right: the card without its chart in a window
+    // of its own (a quote window), and the list back here. While the window
+    // is linked, tickers clicked in the lists open in it. In the quote
+    // window, where there is no chart, the row offers the chart windows
+    // instead: the widget's own chart and TradingView's, following the
+    // active ticker (or this window's symbol, if it is unlinked).
+    RowLayout {
+        visible: !detail.chartOnly && detail.tab === 0
+        Layout.fillWidth: true
+        Layout.rightMargin: Kirigami.Units.largeSpacing
+        Item { Layout.fillWidth: true }
+        PlasmaComponents3.ToolButton {
+            visible: !detail.inWindow
+            icon.name: "window-new"
+            text: i18n("Quote")
+            onClicked: {
+                detail.ws.openQuote(detail.entry, true)
+                detail.back()
+            }
+            PlasmaComponents3.ToolTip { text: i18n("Pop the quote card out into a window of its own, without the chart. It follows the tickers you click, along with the linked chart windows, and the list stays here.") }
+        }
+        PlasmaComponents3.ToolButton {
+            visible: detail.inWindow
+            icon.name: "window-new"
+            text: i18n("Chart")
+            onClicked: detail.ws.openChart("chart", detail.linked ? "" : detail.entry.symbol, "5m")
+            PlasmaComponents3.ToolTip { text: i18n("Open the chart in a window of its own, at 5-minute bars. It follows the symbol you open next, as this card does.") }
+        }
+        PlasmaComponents3.ToolButton {
+            visible: detail.inWindow
+            icon.name: "office-chart-line-stacked"
+            text: i18n("TV")
+            onClicked: detail.ws.openChart("tv", detail.linked ? "" : detail.entry.symbol, "5m")
+            PlasmaComponents3.ToolTip { text: i18n("Open TradingView's chart for this symbol in a window, with its own indicators and drawing tools") }
+        }
+    }
+
     // ── the screen's scorecard, rule by rule ────────────────────────────
     // Opened from a screen with a scorecard: each rule with the row's
     // figure, the target and whether it passed. The figures are the ones
@@ -1478,7 +1776,7 @@ ColumnLayout {
     readonly property bool cardShown: !!card && !!cardRow && card.rules.some(r => !/^p[1-8]$/.test(r.measure))
     readonly property var cardScore: cardShown ? Scorecards.score(card, cardRow) : null
     ColumnLayout {
-        visible: detail.tab === 0 && detail.cardShown
+        visible: !detail.chartOnly && detail.tab === 0 && detail.cardShown
         Layout.fillWidth: true
         Layout.leftMargin: Kirigami.Units.largeSpacing
         Layout.rightMargin: Kirigami.Units.largeSpacing
@@ -1488,7 +1786,7 @@ ColumnLayout {
         PlasmaExtras.Heading {
             level: 5
             opacity: 0.8
-            text: detail.cardShown ? i18n("%1: %2 of %3 rules pass", detail.card.name,
+            text: detail.cardShown && detail.cardScore ? i18n("%1: %2 of %3 rules pass", detail.card.name,
                                           detail.cardScore.score, detail.cardScore.total) : ""
         }
         Repeater {
@@ -1560,13 +1858,15 @@ ColumnLayout {
         const price = q ? q.price : f.value
         if (!(price > 0) || !/^[A-Z][A-Z0-9.\-]{0,9}$/.test(entry.symbol)) return
         valueLoading = true
-        ticker.screener.bridgeRun(["value", entry.symbol + ":" + price + ":" + (q && q.shares > 0 ? q.shares : "")], out => {
-            valueLoading = false
-            if (out && out[entry.symbol]) localValue = out[entry.symbol]
+        const sym = entry.symbol
+        ticker.screener.bridgeRun(["value", sym + ":" + price + ":" + (q && q.shares > 0 ? q.shares : "")], out => {
+            if (!current(sym)) return
+            detail.valueLoading = false
+            if (out && out[sym]) detail.localValue = out[sym]
         }, 120, true)
     }
     ColumnLayout {
-        visible: detail.tab === 0 && detail.kind === "EQUITY" && !detail.cardShown
+        visible: !detail.chartOnly && detail.tab === 0 && detail.kind === "EQUITY" && !detail.cardShown
         Layout.fillWidth: true
         Layout.leftMargin: Kirigami.Units.largeSpacing
         Layout.rightMargin: Kirigami.Units.largeSpacing
@@ -1642,7 +1942,7 @@ ColumnLayout {
     // ── the figures ─────────────────────────────────────────────────────
     // Two label/value pairs per line, as on Yahoo's quote page.
     Repeater {
-        model: detail.tab === 0 ? detail.sections : []
+        model: detail.tab === 0 && !detail.chartOnly ? detail.sections : []
         delegate: ColumnLayout {
             required property var modelData
             Layout.fillWidth: true
@@ -1687,7 +1987,7 @@ ColumnLayout {
         }
     }
     PlasmaComponents3.Label {
-        visible: detail.tab === 0 && detail.sections.length === 0
+        visible: !detail.chartOnly && detail.tab === 0 && detail.sections.length === 0
         Layout.fillWidth: true
         Layout.margins: Kirigami.Units.largeSpacing
         horizontalAlignment: Text.AlignHCenter

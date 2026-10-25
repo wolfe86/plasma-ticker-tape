@@ -23,10 +23,28 @@ ColumnLayout {
 
     required property var engine
     signal open(var entry)
+    // The workspace (unread counts, mutes, export) and which view this is,
+    // "popup" or "window": a screen on show in either does not count unread.
+    property var ws: null
+    property string viewKey: "popup"
+    property bool onScreen: false
+    readonly property string viewingNow: onScreen && alertFeed ? feed : ""
+    onViewingNowChanged: if (ws) ws.setViewing(viewKey, viewingNow)
+    Component.onDestruction: if (ws) ws.setViewing(viewKey, "")
 
     // The screen shown: the one last picked, or the first if that one has
     // since been deleted.
-    readonly property var current: engine.screen(Plasmoid.configuration.screenerView) || engine.screens[0] || null
+    // The screen on show: `screenerView`, shared by the pop-up and the
+    // detached window, unless this view keeps its own (a widget window,
+    // WidgetWindow.qml), which then hears of a pick through screenPicked.
+    property bool ownScreen: false
+    property string screenId: ""
+    signal screenPicked(string id)
+    function pick(id) {
+        if (ownScreen) { screenId = id; screenPicked(id) }
+        else Plasmoid.configuration.screenerView = id
+    }
+    readonly property var current: engine.screen(ownScreen ? screenId : Plasmoid.configuration.screenerView) || engine.screens[0] || null
     readonly property string feed: current ? current.id : ""
     readonly property bool alertFeed: !!current && current.type !== "ranked" && current.type !== "value" && current.type !== "hunter"
     readonly property bool isHunter: !!current && current.type === "hunter"
@@ -268,6 +286,9 @@ ColumnLayout {
         case "time":     return r.time
         case "symbol":   return r.symbol
         case "tags":     return r.tags || ""
+        case "level":    return r.level
+        case "contract": return r.notional
+        case "setup":    return r.failTime
         case "missed":   return (r.failed || []).length
         case "short":    return has(r.shortShares) ? r.shortShares : r.shortFloat
         case "dilution": return r.dilution ? ["LOW", "MEDIUM", "HIGH", "EXTREME"].indexOf(r.dilution.risk) : NaN
@@ -319,14 +340,51 @@ ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
             // One button per screen, in the order set in Settings → Screeners.
+            // An alert screen's button counts the alerts not yet looked at,
+            // lights up in the screen's colour for `tabFlashSeconds` after
+            // each one, and has a speaker beside it that mutes that screen.
             Repeater {
                 model: scr.engine.screens
-                PlasmaComponents3.ToolButton {
+                Row {
+                    id: screenTab
                     required property var modelData
-                    text: modelData.name
-                    checkable: true
-                    checked: scr.feed === modelData.id
-                    onClicked: Plasmoid.configuration.screenerView = modelData.id
+                    readonly property bool alerts: !!scr.ws && scr.ws.alerting(modelData)
+                    readonly property int unread: scr.ws && scr.feed !== modelData.id ? (scr.ws.unread[modelData.id] || 0) : 0
+                    readonly property bool lit: alerts && scr.ws.lit(modelData.id)
+                    readonly property bool muted: alerts && scr.ws.isMuted(modelData.id)
+                    Item {
+                        width: screenButton.width
+                        height: screenButton.height
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            radius: 3
+                            color: Screens.colourOf(screenTab.modelData) || Kirigami.Theme.highlightColor
+                            opacity: screenTab.lit ? 0.45 : 0
+                            Behavior on opacity { NumberAnimation { duration: Kirigami.Units.longDuration } }
+                        }
+                        PlasmaComponents3.ToolButton {
+                            id: screenButton
+                            text: screenTab.modelData.name + (screenTab.unread > 0 ? " (" + screenTab.unread + ")" : "")
+                            font.bold: screenTab.unread > 0
+                            checkable: true
+                            checked: scr.feed === screenTab.modelData.id
+                            onClicked: scr.pick(screenTab.modelData.id)
+                        }
+                    }
+                    PlasmaComponents3.ToolButton {
+                        visible: screenTab.alerts && !!screenTab.modelData.sound
+                        icon.name: screenTab.muted ? "audio-volume-muted" : "audio-volume-high"
+                        icon.width: Kirigami.Units.iconSizes.small
+                        icon.height: Kirigami.Units.iconSizes.small
+                        display: PlasmaComponents3.AbstractButton.IconOnly
+                        opacity: screenTab.muted ? 1 : 0.5
+                        onClicked: scr.ws.toggleMute(screenTab.modelData.id)
+                        PlasmaComponents3.ToolTip {
+                            text: screenTab.muted ? i18n("%1 is muted: click to hear its alerts", screenTab.modelData.name)
+                                                  : i18n("Mute %1's alert sound", screenTab.modelData.name)
+                        }
+                    }
                 }
             }
         }
@@ -353,6 +411,12 @@ ColumnLayout {
                 ? (scr.engine.valueUniverse.length
                    ? i18n("Fundamentals: %1 of %2 companies checked today", scr.engine.valueDone, scr.engine.valueUniverse.length)
                    : i18n("Finding companies…"))
+                : scr.isLevels
+                ? i18np("1 symbol watched at its key levels, checked every minute", "%1 symbols watched at their key levels, checked every minute",
+                        scr.engine.levelWatch.symbols.filter(sym => scr.engine.levelWatch.screenWatches(scr.current, sym)).length)
+                : scr.isUoa
+                ? i18np("1 symbol's options read every 15 minutes in the regular session", "%1 symbols' options read every 15 minutes in the regular session",
+                        scr.engine.optionsWatch.symbols.filter(sym => scr.engine.optionsWatch.screenWatches(scr.current, sym)).length)
                 : scr.alertFeed
                 ? i18n("%1 watched · %2", scr.engine.candidates.length, scr.engine.source || i18n("waiting"))
                 : i18n(scr.current.rankLow ? "Bottom %1 by %2 · %3 watched" : "Top %1 by %2 · %3 watched", scr.current.rankCount || 25,
@@ -418,13 +482,20 @@ ColumnLayout {
             }
             PlasmaComponents3.ToolTip { text: i18n("Reset this screen's columns to their defaults") }
         }
+        // Every alert of the session on show, as CSV for the trade journal.
+        PlasmaComponents3.ToolButton {
+            visible: scr.alertFeed && !!scr.ws
+            icon.name: "document-export"
+            onClicked: scr.ws.exportCsv()
+            PlasmaComponents3.ToolTip { text: i18n("Export every screen's alerts to CSV (times in New York time), into %1", scr.ws ? scr.ws.exportDir : "") }
+        }
         PlasmaComponents3.ToolButton {
             visible: scr.alertFeed
             icon.name: Plasmoid.configuration.alertSound ? "audio-volume-high" : "audio-volume-muted"
             onClicked: Plasmoid.configuration.alertSound = !Plasmoid.configuration.alertSound
             PlasmaComponents3.ToolTip {
-                text: Plasmoid.configuration.alertSound ? i18n("Alert sound on: click to mute")
-                                                        : i18n("Muted: click to turn the alert sound on")
+                text: Plasmoid.configuration.alertSound ? i18n("Alert sounds on: click to mute every screen")
+                                                        : i18n("All alert sounds muted: click to turn them on")
             }
         }
     }
@@ -434,7 +505,9 @@ ColumnLayout {
     // Every column, in the default order; `w` is the default width in grid
     // units. Time and the label column only exist on the alert feeds.
     // `on`: which screens show it -- "momentum" (alert and ranked screens),
-    // "value" (long-term value lists), or both when absent.
+    // "value" (long-term value lists), "levels" (watchlist key levels),
+    // "uoa" (unusual options), "watch" (either of those two), or all when
+    // absent. `off`: offered in Columns but not shown until ticked.
     readonly property var allColumns: [
         { key: "time",    title: Plasmoid.configuration.timesLocal ? i18n("Time") : i18n("Time (ET)"), w: 6.4, alert: true },
         { key: "symbol",  title: i18n("Symbol"),         w: 4.6 },
@@ -458,6 +531,14 @@ ColumnLayout {
         { key: "offHigh", title: i18n("Under 52w\nhigh %"), w: 4.4, on: "value" },
         { key: "off52",   title: i18n("Off 52w\nlow %"), w: 4.2, on: "value" },
         { key: "dilution", title: i18n("Dilution"),      w: 5.0 },
+        { key: "dtc",     title: i18n("Days to\ncover"), w: 3.6, on: "momentum", off: true },
+        { key: "level",   title: i18n("Level"),          w: 8.5, on: "levels" },
+        { key: "contract", title: i18n("Contract"),      w: 6.5, on: "uoa" },
+        { key: "optVolume", title: i18n("Option\nvolume"), w: 4.2, on: "uoa" },
+        { key: "openInterest", title: i18n("Open\ninterest"), w: 4.2, on: "uoa" },
+        { key: "voi",     title: i18n("Vol /\nOI"),     w: 3.2, on: "uoa" },
+        { key: "notional", title: i18n("Premium\n$"),   w: 4.4, on: "uoa" },
+        { key: "setup",   title: i18n("Setup"),          w: 14, on: "watch" },
         { key: "missed",  title: i18n("Missed"),         w: 7.5 },
         { key: "tags",    title: "",                     w: 6.5, alert: true }
     ]
@@ -482,10 +563,22 @@ ColumnLayout {
     readonly property var stockColumns: ["float", "rvol5", "gap", "short", "dilution", "pe5", "pfcf", "roic", "vs50", "trend", "maSlope", "offHigh", "off52"]
     function possible(c) {
         return (!c.alert || alertFeed) && ((c.key !== "score" && c.key !== "missed") || scored)
+            && (c.on !== "levels" || isLevels) && (c.on !== "uoa" || isUoa) && (c.on !== "watch" || isLevels || isUoa)
             && (c.key !== "theme" || Plasmoid.configuration.themesOn || Plasmoid.configuration.sectorsOn)
             && !(isCrypto && stockColumns.indexOf(c.key) >= 0)
     }
-    function defaultShown(c) { return isCrypto && c.key === "marketCap" ? true : !c.on || c.on === (isValue ? "value" : "momentum") }
+    readonly property bool isLevels: !!current && current.type === "levels"
+    readonly property bool isUoa: !!current && current.type === "uoa"
+    function defaultShown(c) {
+        if (isCrypto && c.key === "marketCap") return true
+        // A levels screen: what the level was and how it played out, then the price.
+        if (isLevels) return ["time", "symbol", "theme", "level", "setup", "price", "change", "tags"].indexOf(c.key) >= 0
+        // Unusual options: the contract and its trading, then the stock.
+        if (isUoa) return ["time", "symbol", "theme", "contract", "optVolume", "openInterest", "voi", "notional", "price", "change"].indexOf(c.key) >= 0
+        // `off`: offered in Columns, not shown until ticked.
+        if (c.off) return false
+        return !c.on || c.on === (isValue ? "value" : "momentum")
+    }
     // Layouts saved before `seen` existed (before 2026-10-24) knew every
     // column except these.
     // Their saved place is ignored too: an older Columns menu appended a
@@ -535,7 +628,8 @@ ColumnLayout {
     FontMetrics { id: headFm; font.family: scr.textFamily; font.pointSize: scr.cellPoints; font.bold: true }
     // The widest figure a column usually holds; tags and missed wrap or elide.
     readonly property var sampleText: ({
-        time: "00:00:00 pm", price: "00000.00", volume: "000.00M", float: "000.00M", rvol: "000.00",
+        time: "00:00:00 pm", price: "00000.00", level: "Prior-day low 000.00", dtc: "000.0",
+        contract: "000.5C 00 MMM", optVolume: "000.00K", openInterest: "000.00K", voi: "000.0×", notional: "000.00M", volume: "000.00M", float: "000.00M", rvol: "000.00",
         rvol5: "00,000", gap: "-000.00", change: "-000.00", short: "000.00M", marketCap: "000.00B",
         pe5: "-000.0", pfcf: "-000.0", roic: "-000.0", vs50: "-000.00", trend: "-000.00", maSlope: "-000.00",
         offHigh: "-000.00", off52: "000.00", dilution: "EXTREME"
@@ -676,6 +770,14 @@ ColumnLayout {
         case "off52":  return pct(r.off52)
         case "offHigh": return pct(r.offHigh)
         case "dilution": return r.dilution && r.dilution.risk !== "UNKNOWN" ? r.dilution.risk : "—"
+        case "level":  return has(r.level) ? (r.levelName || "") + " " + fmtPrice(r.level) : "—"
+        case "dtc":    return has(r.dtc) ? r.dtc.toFixed(1) : "—"
+        case "contract": return r.contract || ""
+        case "optVolume": return has(r.optVolume) ? big(r.optVolume) : "—"
+        case "openInterest": return has(r.openInterest) ? big(r.openInterest) : "—"
+        case "voi":    return !has(r.voi) ? "—" : r.openInterest > 0 ? r.voi.toFixed(1) + "×" : i18n("new")
+        case "notional": return has(r.notional) ? big(r.notional) : "—"
+        case "setup":  return r.detailText || ""
         }
         return ""
     }
@@ -954,10 +1056,11 @@ ColumnLayout {
                                                 textFormat: Text.PlainText
                                                 text: scr.cell(rowItem.modelData, cellBox.key)
                                                 font.pointSize: Kirigami.Theme.smallFont.pointSize
-                                                font.family: cellBox.key === "tags" || cellBox.key === "missed"
+                                                font.family: cellBox.key === "tags" || cellBox.key === "missed" || cellBox.key === "setup" || cellBox.key === "level"
+                                                             || cellBox.key === "contract"
                                                              ? Kirigami.Theme.defaultFont.family
                                                              : Kirigami.Theme.fixedWidthFont.family
-                                                horizontalAlignment: cellBox.key === "tags" || cellBox.key === "missed"
+                                                horizontalAlignment: cellBox.key === "tags" || cellBox.key === "missed" || cellBox.key === "setup" || cellBox.key === "level"
                                                                      ? Text.AlignLeft : Text.AlignRight
                                                 verticalAlignment: Text.AlignVCenter
                                                 elide: Text.ElideRight
@@ -1121,9 +1224,37 @@ ColumnLayout {
                 : !scr.alertFeed ? i18n("Filling on the next pass…")
                 : scr.isCrypto ? i18n("No alerts in the last 24 hours. Watching %1 Coinbase pairs; the feed fills as they move.",
                                       Object.keys(scr.engine.cproducts).length)
+                : scr.isUoa && scr.engine.currentPhase !== "closed" ? i18n("No unusual options yet today. The watchlist's option chains are read every 15 minutes in the regular session.")
+                : scr.isLevels && scr.engine.currentPhase !== "closed" ? i18n("No level alerts yet today. Your watchlist is checked every minute against its prior-day, premarket and session levels and the levels drawn on its charts.")
                 : scr.engine.currentPhase === "closed" ? i18n("Market closed: alerts resume when trading does")
                 : i18n("No alerts yet. Watching %1 symbols; the feed fills as they move.",
                        scr.engine.candidates.length)
+        }
+    }
+
+    // The last export: where it went, with a button to open the folder.
+    RowLayout {
+        visible: !!scr.ws && scr.ws.exportNote !== ""
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.smallSpacing
+        Layout.rightMargin: Kirigami.Units.smallSpacing
+        PlasmaComponents3.Label {
+            Layout.fillWidth: true
+            font: Kirigami.Theme.smallFont
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: scr.ws ? scr.ws.exportNote : ""
+        }
+        PlasmaComponents3.ToolButton {
+            visible: !!scr.ws && scr.ws.exportedFile !== ""
+            icon.name: "folder-open"
+            onClicked: Qt.openUrlExternally("file://" + scr.ws.exportDir)
+            PlasmaComponents3.ToolTip { text: i18n("Open the folder") }
+        }
+        PlasmaComponents3.ToolButton {
+            icon.name: "window-close"
+            onClicked: scr.ws.exportNote = ""
+            PlasmaComponents3.ToolTip { text: i18n("Dismiss") }
         }
     }
 

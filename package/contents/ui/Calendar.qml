@@ -358,7 +358,23 @@ ColumnLayout {
         Layout.fillWidth: true
         opacity: cal.past(event) && !cal.hasActual(event) ? 0.55 : 1
         onClicked: if (earn) cal.openReporter(event)
-        PlasmaComponents3.ToolTip { text: cal.tip(row.event) }
+        PlasmaComponents3.ToolTip {
+            text: cal.tip(row.event) + (row.move ? "\n" + i18n("Options price in ±$%1 (%2%) through the %3 expiry",
+                  row.move.dollars.toFixed(2), row.move.pct.toFixed(1), Qt.formatDate(new Date(row.move.expiry), "d MMM")) : "")
+        }
+        // An upcoming reporter: the move its options price in through the
+        // report -- the at-the-money straddle of the first expiry after it
+        // (Yahoo, delayed). Day view only: a week holds too many reporters
+        // to read a chain for each.
+        property var move: null
+        function loadMove() {
+            if (!earn || !event.ticker || !event.date || event.date < cal.todayIso) return
+            const sym = event.ticker
+            const at = Date.parse(event.date + "T" + (event.session === "amc" ? "21:00" : "13:00") + ":00Z")
+            cal.engine.ticker.workspace.earningsMove(sym, at, m => { if (row.event.ticker === sym) row.move = m })
+        }
+        onEventChanged: { move = null; loadMove() }
+        Component.onCompleted: if (!move) loadMove()
 
         contentItem: RowLayout {
             spacing: Kirigami.Units.largeSpacing
@@ -414,6 +430,15 @@ ColumnLayout {
                     text: (row.earn ? i18n("EPS est %1", cal.figure(row.event.expected))
                                     : i18n("Exp %1", cal.figure(row.event.expected)))
                           + " · " + i18n("Prev %1", cal.figure(row.event.previous))
+                }
+                PlasmaComponents3.Label {
+                    visible: !!row.move
+                    Layout.alignment: Qt.AlignRight
+                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.pointSize: Kirigami.Theme.smallFont.pointSize
+                    color: Kirigami.Theme.neutralTextColor
+                    textFormat: Text.PlainText
+                    text: row.move ? i18n("±%1% priced in", row.move.pct.toFixed(1)) : ""
                 }
                 PlasmaComponents3.Label {
                     visible: cal.hasActual(row.event)

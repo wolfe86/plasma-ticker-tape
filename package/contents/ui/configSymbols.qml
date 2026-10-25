@@ -10,8 +10,10 @@
 //
 // Saving follows the pattern described at the top of configScreener.qml: on
 // Apply, a list this page did not change is re-read from the live
-// configuration, and a symbol the detail card's "+ Watchlist" added while
-// the page was open is kept alongside this page's edits.
+// configuration. The pop-up edits the same list (its watchlist rows drag,
+// star and remove; a card's + Watchlist adds), and this page follows those
+// edits while it is open: unchanged here, it simply shows the new list;
+// changed here too, the two are merged (mergeSymbols).
 
 import QtQuick
 import QtQuick.Layouts
@@ -69,7 +71,10 @@ KCM.SimpleKCM {
         if (cfg_symbols !== before) fill()
         snapshot()
     }
-    // This page's list, plus any symbol added elsewhere while it was open.
+    // This page's list `mine`, with what changed elsewhere since `base`
+    // (the list when this page last read it) in `theirs`: symbols removed
+    // there go, stars changed there follow, symbols added there join at
+    // the end, and a new order there is taken if this page kept the old one.
     function mergeSymbols(base, mine, theirs) {
         let b, m, t
         try {
@@ -77,8 +82,42 @@ KCM.SimpleKCM {
         } catch (e) { return mine }
         if (!Array.isArray(m) || !Array.isArray(t)) return mine
         if (!Array.isArray(b)) b = []
-        const has = (l, sym) => l.some(s => s && s.symbol === sym)
-        return JSON.stringify(m.concat(t.filter(s => s && !has(b, s.symbol) && !has(m, s.symbol))))
+        const find = (l, sym) => l.find(s => s && s.symbol === sym)
+        const has = (l, sym) => !!find(l, sym)
+        let out = m.filter(s => s && !(has(b, s.symbol) && !has(t, s.symbol)))
+        out = out.map(s => {
+            const bs = find(b, s.symbol), ts = find(t, s.symbol)
+            return bs && ts && !!ts.star !== !!bs.star ? Object.assign({}, s, { star: !!ts.star }) : s
+        })
+        out = out.concat(t.filter(s => s && !has(b, s.symbol) && !has(m, s.symbol)))
+        const order = l => l.filter(s => s).map(s => s.symbol)
+        const common = x => order(x).filter(sym => has(b, sym) && has(m, sym) && has(t, sym)).join(",")
+        if (common(m) === common(b) && common(t) !== common(b)) {
+            const at = sym => { const i = order(t).indexOf(sym); return i < 0 ? 1e9 : i }
+            out = out.map((s, i) => ({ s: s, i: i })).sort((x, y) => at(x.s.symbol) - at(y.s.symbol) || x.i - y.i).map(x => x.s)
+        }
+        return JSON.stringify(out)
+    }
+    // Follows the live list while the page is open (see the top).
+    Connections {
+        target: page.liveConfig()
+        ignoreUnknownSignals: true
+        // Either signal may be the one that comes, depending on how the
+        // value was written; following the same list twice changes nothing.
+        function onValueChanged(key, value) { if (key === "symbols") page.followLive() }
+        function onSymbolsChanged() { page.followLive() }
+    }
+    function followLive() {
+        const c = page.liveConfig()
+        if (!c || !page.loaded) return
+        const live = c.symbols
+        if (live === page.cfg_symbols || live === page.opened.symbols) return
+        page.cfg_symbols = page.cfg_symbols === page.opened.symbols ? live
+                         : page.mergeSymbols(page.opened.symbols, page.cfg_symbols, live)
+        const o = Object.assign({}, page.opened)
+        o.symbols = live
+        page.opened = o
+        page.fill()
     }
     function save() {
         if (!loaded) return

@@ -70,6 +70,25 @@ The week's market-moving economic releases (CPI, jobs, Fed, PMI and more) with e
 - **News as cards.** Each headline has a picture (the feed's own, else the article's preview image), the stocks it names as chips, and its source and age. The same story from two places shows once. Filter by *Your screens*, *Market* or *Your feeds*.
 - **Company search.** Type a ticker or a company name ("adobe") in the News search box and that company's own news is listed too.
 
+### New in 1.3 (beta)
+
+- **A window of its own.** The pop-out button in the pop-up's header opens everything in a window you can resize, tile, full-screen and keep open beside your trading platform. It remembers its size, docks back to the panel, and the widget's keyboard shortcut (**Settings → Keyboard Shortcuts**) shows and hides it.
+- **Screen buttons that say which screen alerted.** Each alert screen's button counts the alerts you haven't looked at and lights up in the screen's colour for a few seconds after each one. A speaker beside it mutes that screen alone.
+- **Layouts.** Save the screens, columns, sorts, mutes, chart settings and open chart windows under a name, and switch between them (the bookmark button).
+- **Export alerts to CSV** for your trade journal, with New York times.
+- **One active ticker.** Whatever you open last, from a screener row, the watchlist, a headline or a symbol typed on the quote card, is the active ticker. Recent tickers sit under the card's title.
+- **Chart windows.** Open a chart in its own window, as many as you like, one per bar size. Each follows the active ticker until you pin it. Charts reload their bars every 30 seconds while on screen.
+- **Quote window.** Pop a quote card out into its own window (the **Quote** button under its chart). Click a ticker in any popped-out window and it shows there and in every linked chart window, and your list stays where it was.
+- **More windows.** Press the pop-out button again for another window on the tab and screen you are looking at: Running Up in one, Crypto 24h High in another, the calendar in a third.
+- **TradingView charts** in a window (the TradingView button in the pop-up's header, or TV above a card's chart), with TradingView's own indicators and drawing tools. Signing in is optional: **Settings → Data → Sign in to TradingView…** opens TradingView's own sign-in page; the widget never sees your password. Needs Qt WebEngine.
+- **Watchlist key-level alerts.** A new screen type: alerts when a watchlist stock falls through a key level (the prior day's high, low or close, the premarket high or low, the session high or low, or a level drawn on its chart) and climbs back above it in time. Every part of the rule is a setting.
+- **An Options tab on every stock's card.** The option chain by expiry, IV and IV rank, the move priced in by each expiry and through the next earnings, max pain and the biggest open-interest strikes. Click contracts to build a trade and see its cost, best and worst case, break-evens, chance of profit, Greeks, a payoff chart and how many fit your risk. Log it to the journal.
+- **Journal and notes.** A Journal tab of the option trades you log, with realised results today, this week and overall; a Notes tab on every card, where Ctrl+V pastes a screenshot into the note (saved as a PNG in your export folder). Both export as Markdown with New York times, screenshots inline. Open trades raise a desktop notification near expiry and near a strike.
+- **Unusual options on your watchlist.** A screen type that alerts when an option trades far more than its open interest.
+- **Short squeeze figures.** Days to cover as a screener column and filter, beside short interest.
+- **Option lines on the chart.** The OI button draws the biggest open-interest strikes and max pain.
+- **The calendar's Day view** shows the move each upcoming reporter's options price in.
+
 ### New in 1.2 (beta)
 
 - **Themes and sectors (beta).** Each stock is matched to a theme, the tradeable story behind it (one of yours, by its newest headline's words or a ticker you pin), or else to its sector. Each is scored hot, building, quiet or burnt from what its members actually did. Set them up in **Settings → Themes**; right-click a screener row to make a theme from its headline, pin the ticker to one, or set its sector. **How they work, how to write headline words and how to read the heat is in [docs/themes.md](docs/themes.md).**
@@ -97,6 +116,7 @@ The week's market-moving economic releases (CPI, jobs, Fed, PMI and more) with e
 - On Debian, install the Qt modules the widget loads: `sudo apt install qml6-module-qtquick-localstorage qml6-module-qtquick-dialogs` (tested on Debian 13). Arch includes them in its Qt packages.
 - Python 3, for the scanner features: float, short interest, per-stock news, the dilution rating, the calendar and the long-term value lists. Standard library only, nothing to `pip install`. Without it, prices, alerts, charts, crypto and your own news sources still work, and the screener says what is missing.
 - For alert sounds, any one of `pw-play` (PipeWire), `paplay` (PulseAudio), `canberra-gtk-play` or `ffplay`, picked automatically, or your own player command in Settings → Screeners. Optional.
+- To paste screenshots into journal notes, `wl-clipboard` on Wayland (`sudo pacman -S wl-clipboard`, `sudo apt install wl-clipboard`) or `xclip` on X11. Optional.
 
 ```bash
 git clone https://github.com/wolfe86/plasma-ticker-tape.git
@@ -143,9 +163,10 @@ Right-click the tape → **Configure Plasma Ticker Tape…**
 | **Screeners** | The stock pool, and every screen: type, trigger, filters, scorecard and sound |
 | **Scorecards** | Named rule sets, for example *price $2–$20, up 10%+, relative volume 5×+, float under 20M, news today* |
 | **Themes** (beta) | Your themes and sectors: their words, pinned tickers and icons, and how heat is scored. See [docs/themes.md](docs/themes.md) |
+| **Workspace** | The detached window, the screen buttons' highlight, recent tickers, the company description's length, chart refresh, option sizing and alerts, and where exports go |
 | **Tape** | Scroll speed, width, refresh rate, the VIX fear line |
 | **Performance** | How often the widget asks for data, and how much: Full, Balanced, Light or Custom |
-| **Data** | Where the data comes from, and which earnings you care about (below) |
+| **Data** | Where the data comes from, which earnings you care about (below), and TradingView: full chart page or embedded chart, and **Sign in to TradingView…** |
 
 | Symbols | Screeners | Scorecards |
 |---|---|---|
@@ -194,6 +215,9 @@ The theme settings are explained in the [themes guide](docs/themes.md).
 | Company names for news ranking | CNBC quotes |
 | News for non-stock symbols | Google News RSS |
 | Filings link on a stock card | [BamSEC](https://www.bamsec.com/) (opens in your browser; nothing is fetched from it) |
+| Option chains, IV, open interest (Options tab, unusual options, IV rank, expected moves) | Yahoo Finance (unofficial endpoint, delayed about 15 minutes) |
+| Watchlist key levels | Yahoo Finance 1-minute and daily bars |
+| TradingView chart windows | TradingView's own chart page or embeddable chart, in a web view |
 
 > [!WARNING]
 > **Not every source is official.** SEC EDGAR, Coinbase and CoinGecko publish APIs for this kind of data. Yahoo Finance, Finviz, stockanalysis.com, Nasdaq's calendar, the news feeds and Google News do not offer a documented public API for it, so they can change or stop answering without notice, and a screen or column will go empty until the scanner is updated. Quotes may be delayed. Check each site's terms for your own use. This project is not affiliated with any of them.
@@ -210,6 +234,9 @@ The theme settings are explained in the [themes guide](docs/themes.md).
 - **The scanner runs as you.** The widget runs `python3` on the scanner folder you choose, so only point it at code you trust.
 - **Settings reach the scanner through a private file**, readable only by you, and never appear on a command line. Symbols are quoted when a scanner command is built, and the scanner accepts only ticker-shaped arguments.
 - **Links from news feeds open only if they are web addresses** (`http://` or `https://`).
+- **Your journal stays local.** Option trades, notes and the recorded IVs are kept in the same local database folder as the alerts. Exports are written only where you set (**Settings → Workspace**; Documents/Plasma Ticker Tape by default).
+- **TradingView windows are a web page.** They load TradingView's site, which sets its own cookies; they are kept in the widget's own web storage (`~/.local/share/plasmashell/QtWebEngine/plasma-ticker-tape`). If you sign in, you do it on TradingView's page; the widget never reads or stores your password. TradingView's terms apply.
+- **Expiry alerts use your desktop's notifications** (`notify-send`).
 - **Your own news feeds** (Settings → Data) can send a header you type, which is saved in plain text in Plasma's config file. Use feeds you trust.
 
 ---
@@ -226,7 +253,7 @@ package/
     └── code/
         ├── scannerbridge.py   what the widget calls; prints one line of JSON
         └── scanner/           the data gathering: lists, Finviz, SEC, calendar, news
-tests/                         offline checks: icons, the scanner bridge and documentation links
+tests/                         offline checks: icons, the scanner bridge, documentation links, key levels and option maths
 ```
 
 The tape, the screener and the news search talk to their sources directly from QML (Yahoo Finance, CoinGecko, Coinbase, Google News). The scanner's lists, Finviz, SEC EDGAR, the calendar and the headline feeds go through `scannerbridge.py`. You can run it by hand to see exactly what the widget gets:
@@ -244,7 +271,11 @@ The `""` means the built-in scanner. Any failure prints `{"error": …}`, and th
 ```bash
 python3 tests/test_glyphs.py
 python3 tests/test_docs.py
+python3 tests/test_levels.py
+python3 tests/test_options.py
 ```
+
+`test_levels.py` runs the key-level rule (fail, rebound, hold, lapse, bad prints after hours) on made-up bars and on SPY's 2026-10-23 after-hours bad print. `test_options.py` checks the option maths against textbook Black-Scholes values and the payoff, break-even, sizing and chain readings on small cases. Both need Node.js and are skipped without it.
 
 `test_glyphs.py` checks that every icon in the library is valid SVG, that every theme and sector points at an icon that exists, and that the scanner bridge compiles and reports errors as JSON. Its icon checks need [Node.js](https://nodejs.org/) and are skipped without it. `test_docs.py` checks that every image and link in the documentation points at a file that exists. The tests run offline; they do not call any data source.
 

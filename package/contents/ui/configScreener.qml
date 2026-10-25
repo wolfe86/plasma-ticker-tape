@@ -32,6 +32,7 @@ import QtQuick.Dialogs
 import "sounds.js" as Sounds
 import "screens.js" as Screens
 import "scorecards.js" as Scorecards
+import "levels.js" as Levels
 
 KCM.SimpleKCM {
     id: page
@@ -188,6 +189,18 @@ KCM.SimpleKCM {
         const c = { type: t }
         if (t === "ranked") c.rankCount = 25
         else if (t === "value") c.rankCount = 50
+        else if (t === "uoa") {
+            const start = Screens.uoaStarter()
+            for (const k of ["uoaMinVolume", "uoaRatio", "uoaMinNotional", "uoaExpiries", "levelWatchlist", "levelTickers"])
+                if (cur[k] === undefined) c[k] = start[k]
+        }
+        else if (t === "levels") {
+            // The rule's starting values, for any it does not have yet.
+            const start = Screens.levelStarter()
+            for (const k of ["levelSource", "autoLevels", "failBuffer", "failUnit", "failBy", "reboundMinutes",
+                             "holdBars", "armedMinutes", "levelWatchlist", "levelTickers"])
+                if (cur[k] === undefined) c[k] = start[k]
+        }
         setFields(c)
     }
 
@@ -206,7 +219,7 @@ KCM.SimpleKCM {
         priceMin: 1, priceMax: 20, changeMin: 10, changeMax: -10, gapMin: 5,
         volumeMin: 1e6, noVolChangeMin: 20, noVolBounceMin: 20, rvolMin: 2, rvol5Min: 200,
         capMin: 300e6, capMax: 2e9, floatMin: 1e6, floatMax: 20e6, shortMin: 10,
-        newsHours: 24, scoreMin: 3, valueMin: 6, offHighMin: 15
+        newsHours: 24, scoreMin: 3, valueMin: 6, offHighMin: 15, dtcMin: 3
     })
     // Settings-page wording for filters whose screens.js label is jargon.
     readonly property var filterLabels: ({
@@ -233,6 +246,7 @@ KCM.SimpleKCM {
         floatMin: i18n("Float: the shares available to trade. Looked up after a stock appears; the row hides once the figure is known and fails."),
         floatMax: i18n("Float: the shares available to trade. Looked up after a stock appears; the row hides once the figure is known and fails."),
         shortMin: i18n("Shares sold short, as a % of the float. Looked up after a stock appears."),
+        dtcMin: i18n("Days to cover: the shares sold short ÷ an average day's volume — how many days of normal trading it would take shorts to buy back. Short interest is published twice a month, so this is as of the last report, not today. Looked up after a stock appears."),
         newsHours: i18n("Hides the row once its news look-up shows no headline in this many hours."),
         scoreMin: i18n("How many of this screen's scorecard rules a row must pass (the same as Score ≥ in the pop-up)."),
         valueMin: i18n("Of the 8 checks from SEC filings (the Deep Value 8 scorecard)."),
@@ -451,6 +465,26 @@ KCM.SimpleKCM {
                 QQC2.ToolTip.visible: hovered
                 QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
             }
+            // Unusual options on the watchlist, to start from, once.
+            QQC2.ToolButton {
+                visible: !page.list.some(s => s.type === "uoa")
+                icon.name: "list-add"
+                text: i18n("Add unusual options")
+                onClicked: { page.commit(page.list.concat([Screens.uoaStarter()])); page.sel = page.list.length - 1 }
+                QQC2.ToolTip.text: i18n("Alerts when an option on a watchlist stock trades far more than its open interest: new positions being opened. From Yahoo's option chains, every 15 minutes in the regular session.")
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+            }
+            // Watchlist key-level alerts, to start from, once.
+            QQC2.ToolButton {
+                visible: !page.list.some(s => s.type === "levels")
+                icon.name: "list-add"
+                text: i18n("Add watchlist level alerts")
+                onClicked: { page.commit(page.list.concat([Screens.levelStarter()])); page.sel = page.list.length - 1 }
+                QQC2.ToolTip.text: i18n("Alerts when a watchlist stock falls through a key level (prior day's high, low or close, premarket high or low, the session low, or a level drawn on its chart) and then climbs back above it")
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+            }
             QQC2.ToolButton { icon.name: "go-up"; enabled: page.sel > 0; onClicked: page.move(-1)
                 QQC2.ToolTip.text: i18n("Move this screen's button left in the pop-up")
                 QQC2.ToolTip.visible: hovered; QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay }
@@ -508,11 +542,12 @@ KCM.SimpleKCM {
                     currentIndex: page.cur && Screens.isCrypto(page.cur) ? 1 : 0
                     onActivated: index => {
                         const c = { market: Screens.markets[index].key }
-                        // No long-term value list for crypto: no filings to read.
-                        if (index === 1 && page.cur.type === "value") { c.type = "running"; c.rankCount = undefined }
+                        // No long-term value list for crypto (no filings to read), and
+                        // no key levels (no sessions).
+                        if (index === 1 && Screens.stocksOnlyTypes.indexOf(page.cur.type) >= 0) { c.type = "running"; c.rankCount = undefined }
                         page.setFields(c)
                     }
-                    QQC2.ToolTip.text: i18n("US stocks through Yahoo, or crypto pairs through Coinbase around the clock. Crypto has no long-term value lists, so a value list switched to crypto becomes Running Up.")
+                    QQC2.ToolTip.text: i18n("US stocks through Yahoo, or crypto pairs through Coinbase around the clock. Crypto has no long-term value lists or key-level alerts, so either switched to crypto becomes Running Up.")
                     QQC2.ToolTip.visible: hovered
                     QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                 }
@@ -541,11 +576,11 @@ KCM.SimpleKCM {
                 QQC2.ComboBox {
                     Kirigami.FormData.label: i18n("Type:")
                     implicitContentWidthPolicy: QQC2.ComboBox.WidestText
-                    readonly property var choices: Screens.types.filter(t => !(Screens.isCrypto(page.cur) && t.key === "value"))
+                    readonly property var choices: Screens.types.filter(t => !(Screens.isCrypto(page.cur) && Screens.stocksOnlyTypes.indexOf(t.key) >= 0))
                     model: choices.map(t => t.name)
                     currentIndex: page.cur ? choices.findIndex(t => t.key === page.cur.type) : 0
                     onActivated: index => page.setType(choices[index].key)
-                    QQC2.ToolTip.text: i18n("Running up: alerts when a price jumps fast. New high of day: alerts on each new daily high. Ranked list: a live top-N table. Long-term value list: companies scored on SEC filings. Theme Hunter: themes ranked by heat.")
+                    QQC2.ToolTip.text: i18n("Running up: alerts when a price jumps fast. New high of day: alerts on each new daily high. Ranked list: a live top-N table. Long-term value list: companies scored on SEC filings. Theme Hunter: themes ranked by heat. Watchlist key levels: alerts when a watchlist stock falls through a key level and climbs back above it. Unusual options: alerts when a watchlist stock's option trades far more than its open interest.")
                     QQC2.ToolTip.visible: hovered
                     QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                 }
@@ -626,6 +661,213 @@ KCM.SimpleKCM {
                         id: rankTip
                         readonly property string text: i18n("Shows the top N stocks by this measure. RVOL (relative volume) = today's volume compared with the stock's normal volume.")
                     }
+                }
+
+                // ── Watchlist key levels (levels.js) ──
+                readonly property bool levelsScreen: !!page.cur && page.cur.type === "levels"
+                readonly property var lr: Levels.rule(page.cur)
+                QQC2.ComboBox {
+                    visible: screenForm.levelsScreen
+                    Kirigami.FormData.label: i18n("Levels from:")
+                    implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+                    readonly property var keys: ["both", "auto", "manual"]
+                    model: [i18n("Automatic and chart levels"), i18n("Automatic levels only"), i18n("Levels drawn on the chart only")]
+                    currentIndex: Math.max(0, keys.indexOf(screenForm.lr.levelSource))
+                    onActivated: index => page.setField("levelSource", keys[index])
+                    QQC2.ToolTip.text: i18n("Automatic levels are worked out from the bars (ticked below). Chart levels are the ones you draw on a symbol's chart with a double-click.")
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                }
+                Flow {
+                    visible: screenForm.levelsScreen && screenForm.lr.levelSource !== "manual"
+                    Kirigami.FormData.label: i18n("Automatic levels:")
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+                    spacing: Kirigami.Units.smallSpacing
+                    Repeater {
+                        model: Levels.kinds
+                        QQC2.CheckBox {
+                            required property var modelData
+                            text: modelData.name
+                            checked: screenForm.lr.autoLevels.indexOf(modelData.key) >= 0
+                            onToggled: {
+                                const l = screenForm.lr.autoLevels.filter(k => k !== modelData.key)
+                                if (checked) l.push(modelData.key)
+                                page.setField("autoLevels", l)
+                            }
+                        }
+                    }
+                }
+                RowLayout {
+                    visible: screenForm.levelsScreen
+                    Kirigami.FormData.label: i18n("It fails when it is below by:")
+                    QQC2.TextField {
+                        id: bufField
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 3.5
+                        readonly property string stored: Screens.fmtNum(screenForm.lr.failBuffer)
+                        text: stored
+                        onEditingFinished: {
+                            const v = Screens.parseNum(text)
+                            if (v !== null && v >= 0 && v !== screenForm.lr.failBuffer) page.setField("failBuffer", v)
+                            else text = Qt.binding(() => bufField.stored)
+                        }
+                        QQC2.ToolTip.text: i18n("How far under the level the price must go to count as a fail, so a tick under it does not arm the alert.")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    QQC2.ComboBox {
+                        model: [i18n("% of the level"), i18n("cents")]
+                        currentIndex: screenForm.lr.failUnit === "cents" ? 1 : 0
+                        onActivated: index => page.setField("failUnit", index === 1 ? "cents" : "pct")
+                    }
+                }
+                QQC2.ComboBox {
+                    visible: screenForm.levelsScreen
+                    Kirigami.FormData.label: i18n("Counts on:")
+                    implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+                    model: [i18n("Any trade through the level"), i18n("A 1-minute close through the level")]
+                    currentIndex: screenForm.lr.failBy === "close" ? 1 : 0
+                    onActivated: index => page.setField("failBy", index === 1 ? "close" : "trade")
+                    QQC2.ToolTip.text: i18n("For both the fail and the rebound. Closes are steadier; trades are a minute faster.")
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                }
+                RowLayout {
+                    visible: screenForm.levelsScreen
+                    Kirigami.FormData.label: i18n("Back above within:")
+                    QQC2.SpinBox {
+                        from: 1; to: 120; editable: true
+                        value: screenForm.lr.reboundMinutes
+                        onValueModified: page.setField("reboundMinutes", value)
+                        QQC2.ToolTip.text: i18n("Minutes after the fail. A slower recovery does not alert.")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    QQC2.Label { text: i18n("minutes of the fail") }
+                }
+                RowLayout {
+                    visible: screenForm.levelsScreen
+                    Kirigami.FormData.label: i18n("Then holds for:")
+                    QQC2.SpinBox {
+                        from: 0; to: 30; editable: true
+                        value: screenForm.lr.holdBars
+                        onValueModified: page.setField("holdBars", value)
+                        QQC2.ToolTip.text: i18n("1-minute bars in a row that must close above the level before it alerts. 0 alerts on the rebound itself.")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    QQC2.Label { text: i18n("1-minute closes above it (0 = alert at once)") }
+                }
+                RowLayout {
+                    visible: screenForm.levelsScreen
+                    Kirigami.FormData.label: i18n("A fail stays armed for:")
+                    QQC2.SpinBox {
+                        from: 1; to: 390; editable: true
+                        value: screenForm.lr.armedMinutes
+                        onValueModified: page.setField("armedMinutes", value)
+                        QQC2.ToolTip.text: i18n("After this long the fail is forgotten, rebound or not.")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    QQC2.Label { text: i18n("minutes") }
+                }
+                // ── Unusual options (OptionsWatch.qml) ──
+                readonly property bool uoaScreen: !!page.cur && page.cur.type === "uoa"
+                RowLayout {
+                    visible: screenForm.uoaScreen
+                    Kirigami.FormData.label: i18n("A contract trading at least:")
+                    QQC2.SpinBox {
+                        from: 1; to: 1000000; stepSize: 100; editable: true
+                        value: page.cur && page.cur.uoaMinVolume ? page.cur.uoaMinVolume : 500
+                        onValueModified: page.setField("uoaMinVolume", value)
+                    }
+                    QQC2.Label { text: i18n("contracts today") }
+                }
+                RowLayout {
+                    visible: screenForm.uoaScreen
+                    Kirigami.FormData.label: i18n("…and at least:")
+                    QQC2.TextField {
+                        id: uoaRatioField
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 3.5
+                        readonly property string stored: page.cur ? Screens.fmtNum(page.cur.uoaRatio || 3) : ""
+                        text: stored
+                        onEditingFinished: {
+                            const v = Screens.parseNum(text)
+                            if (v > 0 && page.cur && v !== page.cur.uoaRatio) page.setField("uoaRatio", v)
+                            else text = Qt.binding(() => uoaRatioField.stored)
+                        }
+                    }
+                    QQC2.Label { text: i18n("× its open interest") }
+                }
+                RowLayout {
+                    visible: screenForm.uoaScreen
+                    Kirigami.FormData.label: i18n("…worth at least:")
+                    QQC2.TextField {
+                        id: uoaNotional
+                        Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                        readonly property string stored: page.cur ? "$" + Screens.fmtNum(page.cur.uoaMinNotional || 50000) : ""
+                        text: stored
+                        onEditingFinished: {
+                            const v = Screens.parseNum(text)
+                            if (v !== null && v >= 0 && page.cur) page.setField("uoaMinNotional", v)
+                            text = Qt.binding(() => uoaNotional.stored)
+                        }
+                        QQC2.ToolTip.text: i18n("Volume × the mid price × 100. Type 50K or 1M.")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    QQC2.Label { text: i18n("in premium") }
+                }
+                RowLayout {
+                    visible: screenForm.uoaScreen
+                    Kirigami.FormData.label: i18n("Expiries read:")
+                    QQC2.SpinBox {
+                        from: 1; to: 8; editable: true
+                        value: page.cur && page.cur.uoaExpiries ? page.cur.uoaExpiries : 2
+                        onValueModified: page.setField("uoaExpiries", value)
+                        QQC2.ToolTip.text: i18n("The nearest expiries. Each is one request per stock every 15 minutes.")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    QQC2.Label { text: i18n("nearest") }
+                }
+                QQC2.Label {
+                    visible: screenForm.uoaScreen
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+                    wrapMode: Text.WordWrap
+                    font: Kirigami.Theme.smallFont
+                    opacity: 0.7
+                    text: i18n("Volume far above open interest means new positions are being opened. From Yahoo's option chains, delayed about 15 minutes, read every 15 minutes in the regular session — for the watchlist and the tickers below, not the whole market. A contract alerts once a day, and again if its volume doubles.")
+                }
+                QQC2.CheckBox {
+                    visible: screenForm.levelsScreen || screenForm.uoaScreen
+                    Kirigami.FormData.label: i18n("Watch:")
+                    text: i18n("The watchlist's stocks, indexes and funds")
+                    checked: !!page.cur && page.cur.levelWatchlist !== false
+                    onToggled: page.setField("levelWatchlist", checked)
+                }
+                QQC2.TextField {
+                    id: levelTickers
+                    visible: screenForm.levelsScreen || screenForm.uoaScreen
+                    Kirigami.FormData.label: i18n("…and these tickers:")
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 16
+                    placeholderText: i18n("e.g. AAPL TSLA SPY")
+                    readonly property string stored: page.cur ? String(page.cur.levelTickers || "") : ""
+                    text: stored
+                    onEditingFinished: if (page.cur && text !== stored) page.setField("levelTickers", text.toUpperCase().trim())
+                    QQC2.ToolTip.text: i18n("Space- or comma-separated. Crypto and currencies are left out: they have no sessions.")
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                }
+                QQC2.Label {
+                    visible: screenForm.levelsScreen
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Kirigami.Units.gridUnit * 24
+                    wrapMode: Text.WordWrap
+                    font: Kirigami.Theme.smallFont
+                    opacity: 0.7
+                    text: i18n("Alerts when a stock that was above a level falls through it and then climbs back above it in time. Checked every minute from 04:00 to 20:00 New York time on 1-minute bars from Yahoo, one request per stock, so an alert comes a minute or two after the move. Before the open and after the close, when a single stray trade can draw a long wick, it goes by 1-minute closes. Session and premarket highs and lows count from the bars before, so a reclaimed low is the low that was broken.")
                 }
 
                 RowLayout {
@@ -762,6 +1004,26 @@ KCM.SimpleKCM {
                         onClicked: page.preview(page.cur.sound)
                         QQC2.ToolTip.text: i18n("Play this sound"); QQC2.ToolTip.visible: hovered
                         QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                }
+                // The colour its button lights up in after an alert.
+                RowLayout {
+                    visible: !!page.cur && page.cur.type !== "ranked" && page.cur.type !== "value" && !screenForm.hunterScreen
+                    Kirigami.FormData.label: i18n("Alert colour:")
+                    QQC2.ComboBox {
+                        implicitContentWidthPolicy: QQC2.ComboBox.WidestText
+                        model: Screens.colours.map(c => c.name)
+                        currentIndex: page.cur ? Math.max(0, Screens.colours.findIndex(c => c.key === Screens.colourOf(page.cur))) : 0
+                        onActivated: index => page.setField("colour", Screens.colours[index].key)
+                        QQC2.ToolTip.text: i18n("The screen's button lights up in this colour after it alerts. How long it stays lit is under Settings → Workspace.")
+                        QQC2.ToolTip.visible: hovered
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    Rectangle {
+                        width: Kirigami.Units.gridUnit
+                        height: width
+                        radius: width / 2
+                        color: page.cur ? (Screens.colourOf(page.cur) || Kirigami.Theme.highlightColor) : "transparent"
                     }
                 }
             }

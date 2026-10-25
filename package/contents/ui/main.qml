@@ -90,6 +90,25 @@ PlasmoidItem {
     }
     readonly property var symbols: allSymbols.filter(s => s.symbol !== themesEntry)
     readonly property var starred: allSymbols.filter(s => s.star)
+    // Edited from the watchlist rows and the quote card as well as from
+    // Settings → Symbols: on the tape or not, and off the watchlist.
+    function setStar(sym, on) {
+        const list = allSymbols.map(s => s.symbol === sym ? Object.assign({}, s, { star: !!on }) : s)
+        Plasmoid.configuration.symbols = JSON.stringify(list)
+    }
+    function removeSymbol(sym) {
+        Plasmoid.configuration.symbols = JSON.stringify(allSymbols.filter(s => s.symbol !== sym))
+    }
+    // A new order for the watchlist (its symbols, the Themes entry left
+    // where it was), from a drag in the pop-up.
+    function reorderSymbols(order) {
+        const real = order.map(sym => allSymbols.find(s => s.symbol === sym && s.symbol !== themesEntry)).filter(s => s)
+        for (const s of allSymbols) if (s.symbol !== themesEntry && order.indexOf(s.symbol) < 0) real.push(s)
+        const ti = allSymbols.findIndex(s => s.symbol === themesEntry)
+        if (ti >= 0) real.splice(Math.min(ti, real.length), 0, allSymbols[ti])
+        const text = JSON.stringify(real)
+        if (text !== Plasmoid.configuration.symbols) Plasmoid.configuration.symbols = text
+    }
     readonly property var themeTape: screenerEngine.tapeThemeTickers()
     onSymbolsChanged: pollAll()
 
@@ -383,6 +402,93 @@ PlasmoidItem {
     ScreenerEngine {
         id: screenerEngine
         ticker: root
+    }
+    // What the pop-up and the windows share: unread counts, mutes, the
+    // active ticker, layouts, export (Workspace.qml).
+    readonly property alias workspace: workspaceItem
+    Workspace {
+        id: workspaceItem
+        ticker: root
+    }
+
+    // ── the detached window ──────────────────────────────────────────────
+    // The pop-up's content in a window of its own, resizable and kept open
+    // beside other programs (TickerWindow.qml). Loaded only while open.
+    // The widget's keyboard shortcut (Settings → Keyboard Shortcuts) shows
+    // and hides it instead of the pop-up while `hotkeyWindow` is on.
+    activationTogglesExpanded: !Plasmoid.configuration.hotkeyWindow
+    Connections {
+        target: Plasmoid
+        function onActivated() {
+            if (!Plasmoid.configuration.hotkeyWindow) return
+            if (Plasmoid.configuration.windowOpen && windowLoader.item && !windowLoader.item.active)
+                windowLoader.item.raiseUp()
+            else Plasmoid.configuration.windowOpen = !Plasmoid.configuration.windowOpen
+        }
+    }
+    // The pop-up's pop-out button: the detached window, or with that open,
+    // another window on the pop-up's tab and screen (WidgetWindow.qml).
+    function popOut(tab, screen) {
+        root.expanded = false
+        if (Plasmoid.configuration.windowOpen && windowLoader.item) workspaceItem.openWidgetWindow(tab, screen)
+        else Plasmoid.configuration.windowOpen = true
+    }
+    function dockBack() {
+        Plasmoid.configuration.windowOpen = false
+        root.expanded = true
+    }
+    Loader {
+        id: windowLoader
+        active: Plasmoid.configuration.windowOpen
+        sourceComponent: TickerWindow { ticker: root }
+    }
+    // The chart windows (ChartWindow.qml), one per entry in `chartWindows`;
+    // reopened after a restart. The model is a ListModel changed one window
+    // at a time: given the list of ids as an array, the Instantiator rebuilt
+    // every window whenever one opened or closed.
+    ListModel { id: chartModel }
+    function syncCharts() {
+        const ids = workspaceItem.chartIds
+        for (let i = chartModel.count - 1; i >= 0; i--)
+            if (ids.indexOf(chartModel.get(i).chartId) < 0) chartModel.remove(i)
+        for (const id of ids) {
+            let found = false
+            for (let i = 0; i < chartModel.count && !found; i++) found = chartModel.get(i).chartId === id
+            if (!found) chartModel.append({ chartId: id })
+        }
+    }
+    Connections {
+        target: workspaceItem
+        function onChartIdsChanged() { root.syncCharts() }
+    }
+    Instantiator {
+        id: chartWindows
+        model: chartModel
+        // ChartWindow's required `chartId` is filled from the model's role.
+        delegate: ChartWindow { ticker: root }
+        Component.onCompleted: root.syncCharts()
+    }
+    // The widget windows (WidgetWindow.qml), one per entry in
+    // `widgetWindows`, made the same way.
+    ListModel { id: widgetModel }
+    function syncWidgetWindows() {
+        const ids = workspaceItem.widgetIds
+        for (let i = widgetModel.count - 1; i >= 0; i--)
+            if (ids.indexOf(widgetModel.get(i).windowId) < 0) widgetModel.remove(i)
+        for (const id of ids) {
+            let found = false
+            for (let i = 0; i < widgetModel.count && !found; i++) found = widgetModel.get(i).windowId === id
+            if (!found) widgetModel.append({ windowId: id })
+        }
+    }
+    Connections {
+        target: workspaceItem
+        function onWidgetIdsChanged() { root.syncWidgetWindows() }
+    }
+    Instantiator {
+        model: widgetModel
+        delegate: WidgetWindow { ticker: root }
+        Component.onCompleted: root.syncWidgetWindows()
     }
 
     Component {

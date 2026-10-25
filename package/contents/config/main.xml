@@ -338,5 +338,149 @@
     <entry name="newsImages" type="Bool">
       <default>true</default>
     </entry>
+
+    <!-- ── the workspace (1.3) ── -->
+    <!-- Screens whose alert sound is silenced, as a JSON array of screen
+         ids (the speaker beside each screen's button). alertSound is still
+         the switch for all of them. -->
+    <entry name="mutedScreens" type="String">
+      <default>[]</default>
+    </entry>
+    <!-- How long a screen's button stays lit after it alerts, in seconds;
+         0 turns the highlight off. The unread count stays until the screen
+         is looked at. -->
+    <entry name="tabFlashSeconds" type="Int">
+      <default>10</default>
+      <min>0</min>
+      <max>600</max>
+    </entry>
+    <!-- The detached window: open or not (kept across restarts), and its
+         size. Its place
+         on screen is kept where the window system lets a program set it
+         (X11); Wayland places windows itself. -1 = not saved yet. -->
+    <entry name="windowOpen" type="Bool">
+      <default>false</default>
+    </entry>
+    <entry name="windowWidth" type="Int">
+      <default>1100</default>
+    </entry>
+    <entry name="windowHeight" type="Int">
+      <default>760</default>
+    </entry>
+    <entry name="windowX" type="Int">
+      <default>-1</default>
+    </entry>
+    <entry name="windowY" type="Int">
+      <default>-1</default>
+    </entry>
+    <!-- The widget's keyboard shortcut (Settings → Keyboard Shortcuts) shows
+         and hides the detached window instead of the panel pop-up. -->
+    <entry name="hotkeyWindow" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- Saved layouts: JSON {name: {setting: value}} of the screener and
+         chart settings a layout carries (Workspace.qml, presetKeys). -->
+    <entry name="layoutPresets" type="String">
+      <default>{}</default>
+    </entry>
+    <!-- Where alert exports go; empty = Documents/Plasma Ticker Tape. -->
+    <entry name="exportFolder" type="String">
+      <default></default>
+    </entry>
+    <!-- The active ticker's recent history, newest first, as a JSON array of
+         {symbol, label, name}; recentCount is how many are kept. -->
+    <entry name="recentTickers" type="String">
+      <default>[]</default>
+    </entry>
+    <entry name="recentCount" type="Int">
+      <default>8</default>
+      <min>0</min>
+      <max>30</max>
+    </entry>
+    <!-- Charts reload their bars this often while on screen, in seconds;
+         0 = only when opened or the range changes. -->
+    <entry name="chartRefreshSeconds" type="Int">
+      <default>30</default>
+      <min>0</min>
+      <max>3600</max>
+    </entry>
+    <!-- The open chart windows, kept across restarts: JSON array of
+         {id, kind: "chart" | "tv" | "quote", symbol ("" follows the active
+         ticker), label, name, range (a range key such as "5m"), w, h}. -->
+    <entry name="chartWindows" type="String">
+      <default>[]</default>
+    </entry>
+    <!-- While a linked quote window is open, a click on a ticker in the
+         panel's pop-up shows it there (and in every linked chart window) and
+         leaves the list in place, instead of swapping the list for the quote
+         card. A widget window's clicks always go to a quote window. -->
+    <entry name="quoteFollowsClicks" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- More widget windows beside the detached one, kept across restarts:
+         JSON array of {id, n (its number in the title), tab (0-4), screen
+         (the screen id its Screener tab shows), w, h}. -->
+    <entry name="widgetWindows" type="String">
+      <default>[]</default>
+    </entry>
+    <!-- TradingView windows: "page" loads TradingView's full chart page
+         (sign-in optional, saved layouts and indicators with an account);
+         "widget" loads its embeddable chart, which needs no account. -->
+    <entry name="tvMode" type="String">
+      <default>page</default>
+    </entry>
+    <!-- Written by the widget, not the user: a request from Settings →
+         Workspace to open TradingView's sign-in page (a timestamp), and who
+         TradingView last said was signed in ("" = signed out or not known;
+         "?" = not checked yet). The password is never stored. -->
+    <entry name="tvSignInRequest" type="String">
+      <default></default>
+    </entry>
+    <entry name="tvUser" type="String">
+      <default>?</default>
+    </entry>
+    <!-- The company description on a quote card: its first sentence, cut at
+         this many characters; 0 shows two lines. A click shows all of it. -->
+    <entry name="aboutChars" type="Int">
+      <default>220</default>
+      <min>0</min>
+      <max>2000</max>
+    </entry>
+    <!-- ── options (1.3) ── -->
+    <!-- Position sizing: the account, the share of it one trade may risk (%),
+         and the day's walk-away amount (the loss, or the target, after which
+         trading stops for the day). Dollars. -->
+    <entry name="optAccountSize" type="Double">
+      <default>5000</default>
+    </entry>
+    <entry name="optRiskPct" type="Double">
+      <default>2</default>
+    </entry>
+    <entry name="optWalkAway" type="Double">
+      <default>1500</default>
+    </entry>
+    <!-- The risk-free rate for option pricing, in percent a year. -->
+    <entry name="optRate" type="Double">
+      <default>4.5</default>
+    </entry>
+    <!-- Expiry alerts on open journal trades: this many days before expiry,
+         and when the stock comes within this % of a strike. 0 turns each off. -->
+    <entry name="optExpiryDays" type="Int">
+      <default>2</default>
+      <min>0</min>
+      <max>60</max>
+    </entry>
+    <entry name="optStrikePct" type="Double">
+      <default>1</default>
+    </entry>
+    <!-- Record each watchlist stock's at-the-money implied volatility once a
+         trading day, for IV rank (kept a year). -->
+    <entry name="ivRecord" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- Draw the biggest open-interest strikes and max pain on stock charts. -->
+    <entry name="chartOptionLines" type="Bool">
+      <default>false</default>
+    </entry>
   </group>
 </kcfg>

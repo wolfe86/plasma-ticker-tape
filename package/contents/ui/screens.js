@@ -12,13 +12,19 @@
 //     currency:  "USD" (or missing) | "EUR" ... | "BTC" | "ETH" (crypto only):
 //                prices, market caps and dollar volumes are shown -- and the
 //                screen's filters read -- in it. See ScreenerEngine CURRENCY.
-//     type:      "running" | "hod" | "ranked" | "value",  (no value on crypto)
+//     type:      "running" | "hod" | "ranked" | "value" | "hunter" | "levels"
+//                (no value or levels on crypto)
+//     levelSource, autoLevels, failBuffer, failUnit, failBy, reboundMinutes,
+//     holdBars, armedMinutes  // levels: the fail-and-rebound rule (levels.js)
+//     levelWatchlist, levelTickers  // levels, uoa: watch the watchlist, and these
+//     uoaMinVolume, uoaRatio, uoaMinNotional, uoaExpiries  // uoa (OptionsWatch.qml)
 //     runPct, runWindow,        // running: rise % within minutes
 //     rankBy, rankCount,        // ranked: measure and how many rows
 //     rankLow,                  // ranked: true lists the lowest first
 //     filters:   { key: number } -- see filterDefs; a missing key is off
 //     scorecard: "" (none) or a scorecard's id (scorecards.js)
-//     sound:     a path from sounds.js, or "" }
+//     sound:     a path from sounds.js, or ""
+//     colour:    "" or one of `colours` -- the button's highlight }
 .pragma library
 
 var types = [
@@ -26,8 +32,31 @@ var types = [
     { key: "hod",     name: "Alert: new high of day" },
     { key: "ranked",  name: "Ranked list" },
     { key: "value",   name: "Long-term value list" },
-    { key: "hunter",  name: "Theme Hunter (beta)" }
+    { key: "hunter",  name: "Theme Hunter (beta)" },
+    { key: "levels",  name: "Alert: watchlist key levels" },
+    { key: "uoa",     name: "Alert: unusual options (watchlist)" }
 ]
+// Types that need the stock sessions, so not offered on a crypto screen.
+var stocksOnlyTypes = ["value", "levels", "uoa"]
+
+// A screen's colour: its button lights up in it after an alert, and its
+// alerts are marked with it on the compact strip. "" is the theme's
+// highlight colour.
+var colours = [
+    { key: "",       name: "Theme highlight" },
+    { key: "#e8413c", name: "Red" },
+    { key: "#f39c1f", name: "Orange" },
+    { key: "#f4d03f", name: "Yellow" },
+    { key: "#27ae60", name: "Green" },
+    { key: "#1abc9c", name: "Teal" },
+    { key: "#3daee9", name: "Blue" },
+    { key: "#9b59b6", name: "Purple" },
+    { key: "#e84393", name: "Pink" }
+]
+function colourOf(screen) {
+    const c = screen && screen.colour
+    return colours.some(x => x.key === c) ? c : ""
+}
 
 var markets = [
     { key: "stocks", name: "US stocks" },
@@ -54,7 +83,7 @@ function currencyOf(screen) {
     const c = screen && screen.currency
     return currencies.find(x => x.key === c) || currencies[0]
 }
-var stocksOnly = ["gapMin", "noVolChangeMin", "noVolBounceMin", "floatMin", "floatMax", "shortMin", "newsHours", "rvol5Min"]
+var stocksOnly = ["gapMin", "noVolChangeMin", "noVolBounceMin", "floatMin", "floatMax", "shortMin", "dtcMin", "newsHours", "rvol5Min"]
 function isCrypto(screen) { return !!screen && screen.market === "crypto" }
 // The same filter reads differently on a crypto screen: its change is over
 // the rolling 24 hours and its volume is dollars traded, not shares.
@@ -110,6 +139,9 @@ var filterDefs = [
     { key: "floatMin",  label: "Float at least",          measure: "float",      op: ">=", unit: "shares", facts: true },
     { key: "floatMax",  label: "Float at most",           measure: "float",      op: "<=", unit: "shares", facts: true },
     { key: "shortMin",  label: "Short % of float ≥",      measure: "shortFloat", op: ">=", unit: "%", facts: true },
+    // Shares short over an average day's volume, as of the last short
+    // interest date (published twice a month).
+    { key: "dtcMin",    label: "Days to cover ≥",         measure: "dtc",        op: ">=", unit: "days", facts: true },
     { key: "newsHours", label: "News within",             measure: "newsTime",   op: "age", unit: "hours", facts: true },
     // The screen's own scorecard: rows passing fewer rules are hidden.
     { key: "scoreMin",  label: "Scorecard score at least", measure: "score",     op: ">=", unit: "rules", facts: true },
@@ -280,6 +312,23 @@ function cryptoStarters() {
         { id: "c" + t + "g", name: "Crypto Gainers", market: "crypto", type: "ranked",
           rankBy: "change", rankCount: 25, filters: { volumeMin: 1000000 }, scorecard: "", sound: "" }
     ]
+}
+
+// Watchlist key levels, to start from (Settings → Screeners).
+function levelStarter() {
+    return { id: "l" + Date.now().toString(36), name: "Watchlist Levels", type: "levels",
+             levelSource: "both", autoLevels: ["pdh", "pdl", "pdc", "pmh", "pml", "lod"],
+             failBuffer: 0.1, failUnit: "pct", failBy: "trade", reboundMinutes: 10, holdBars: 0, armedMinutes: 30,
+             levelWatchlist: true, levelTickers: "",
+             filters: {}, scorecard: "", sound: "/usr/share/sounds/freedesktop/stereo/complete.oga", colour: "#1abc9c" }
+}
+
+// Unusual options on the watchlist, to start from.
+function uoaStarter() {
+    return { id: "u" + Date.now().toString(36), name: "Unusual Options", type: "uoa",
+             uoaMinVolume: 500, uoaRatio: 3, uoaMinNotional: 50000, uoaExpiries: 2,
+             levelWatchlist: true, levelTickers: "",
+             filters: {}, scorecard: "", sound: "/usr/share/sounds/ocean/stereo/message-new-instant.oga", colour: "#9b59b6" }
 }
 
 function newId() {

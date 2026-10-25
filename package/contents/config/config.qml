@@ -23,6 +23,11 @@ ConfigModel {
         source: "configThemes.qml"
     }
     ConfigCategory {
+        name: i18n("Workspace")
+        icon: "window-new"
+        source: "configWorkspace.qml"
+    }
+    ConfigCategory {
         name: i18n("Tape")
         icon: "preferences-desktop-display"
         source: "configTape.qml"

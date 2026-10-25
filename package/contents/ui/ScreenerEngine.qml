@@ -332,15 +332,19 @@ Item {
     }
     // Each screen has its own sound (Settings → Screeners), so which one
     // fired can be told by ear, whether or not the pop-up is open. The
-    // pop-up's mute button silences them all. One sound per screen for a
+    // pop-up's mute button silences them all, the speaker beside a screen's
+    // button that screen alone (`mutedScreens`). One sound per screen for a
     // burst of alerts, not one per alert.
     property var lastSound: ({})
     // The last scanner problem, in words, or "" -- shown under the screener.
     property string bridgeError: ""
+    readonly property var mutedScreens: {
+        try { const l = JSON.parse(cfg.mutedScreens || "[]"); return Array.isArray(l) ? l : [] } catch (e) { return [] }
+    }
     function play(id) {
         const sc = screen(id)
         const path = sc ? sc.sound : ""
-        if (!cfg.alertSound || !path) return
+        if (!cfg.alertSound || !path || mutedScreens.indexOf(id) >= 0) return
         const now = Date.now()
         if (now - (lastSound[id] || 0) < 5000) return
         lastSound[id] = now
@@ -565,7 +569,8 @@ Item {
                             yahooFloat: raw("defaultKeyStatistics", "floatShares"),
                             shortShares: raw("defaultKeyStatistics", "sharesShort"),
                             yahooShortFloat: raw("defaultKeyStatistics", "shortPercentOfFloat") * 100,
-                            avgVol: raw("summaryDetail", "averageDailyVolume10Day") || raw("summaryDetail", "averageVolume")
+                            avgVol: raw("summaryDetail", "averageDailyVolume10Day") || raw("summaryDetail", "averageVolume"),
+                            shortDate: raw("defaultKeyStatistics", "dateShortInterest")
                         })
                         info = n
                     } catch (e) {}
@@ -715,6 +720,7 @@ Item {
             rvol: avg > 0 && Number.isFinite(volume) ? volume / avg : NaN,
             rvol5: rvol5,
             marketCap: q.marketCap,
+            avgVol: q.averageDailyVolume3Month || q.averageDailyVolume10Day,
             ma50: q.fiftyDayAverage, ma200: q.twoHundredDayAverage,
             low52: q.fiftyTwoWeekLow, high52: q.fiftyTwoWeekHigh,
             shares: q.sharesOutstanding
@@ -847,6 +853,23 @@ Item {
         updated = new Date()
         alerted(feed)
         play(feed)
+    }
+
+    // Watchlist key-level alerts (LevelWatch.qml): its own 1-minute bars for
+    // the watchlist, raising alerts into the "levels" screens' feeds.
+    readonly property alias levelWatch: levelWatchItem
+    LevelWatch {
+        id: levelWatchItem
+        engine: eng
+        ticker: eng.ticker
+    }
+    // Unusual options on the watchlist (OptionsWatch.qml), into the "uoa"
+    // screens' feeds.
+    readonly property alias optionsWatch: optionsWatchItem
+    OptionsWatch {
+        id: optionsWatchItem
+        engine: eng
+        ticker: eng.ticker
     }
 
     // ── keeping the day's alerts ──────────────────────────────────────────
@@ -2595,6 +2618,12 @@ Item {
             sector: n.sector || ""
         }, valueFields(g), themeFields(g.symbol), sectorFields(g.symbol))
         r.aboveEma200 = aboveEma200(g.symbol, g.price)
+        // Days to cover: the shares sold short over an average day's volume.
+        // Short interest is published twice a month, so this is as of
+        // `shortDate`, not today.
+        const avg = n.avgVol > 0 ? n.avgVol : g.avgVol
+        r.dtc = r.shortShares > 0 && avg > 0 ? r.shortShares / avg : NaN
+        r.shortDate = n.shortDate || NaN
         const mine = newsFor(g.symbol)
         if (mine && (!r.newsTime || mine.time > r.newsTime)) {
             r.newsTime = mine.time; r.newsTitle = mine.title; r.newsSource = mine.source; r.newsUrl = mine.url

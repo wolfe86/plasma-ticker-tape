@@ -2,6 +2,12 @@
 
 Newest first. Versions follow `package/metadata.json`.
 
+## 1.2.1
+
+### Fixed
+- The widget failed to load on Debian and other distributions whose Plasma rejects `textFormat` on tooltips. It is removed from those tooltips; the text is shown as plain text.
+- Debian and Ubuntu need the `qml6-module-qtquick-localstorage` and `qml6-module-qtquick-dialogs` packages. The README now lists them.
+
 ## 1.2.0 (beta)
 
 The first release after 1.0.1. Everything below is the 1.2 work.

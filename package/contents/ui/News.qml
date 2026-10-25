@@ -352,7 +352,7 @@ ColumnLayout {
                                     }
                                     HoverHandler { id: chipHover; cursorShape: Qt.PointingHandCursor }
                                     TapHandler { onTapped: news.openStock(chip.modelData) }
-                                    PlasmaComponents3.ToolTip { visible: chipHover.hovered; textFormat: Text.PlainText; text: i18n("Open %1's chart and figures", chip.modelData) }
+                                    PlasmaComponents3.ToolTip { visible: chipHover.hovered; text: i18n("Open %1's chart and figures", chip.modelData) }
                                 }
                             }
                             // A headline naming no stock can still carry one of your themes.

@@ -94,6 +94,7 @@ The week's market-moving economic releases (CPI, jobs, Fed, PMI and more) with e
 
 **You need:**
 - KDE Plasma 6. Developed and tested on Plasma 6.8 with Qt 6.12 (Arch Linux); earlier 6.x releases have not been tested yet, so reports either way are welcome.
+- On Debian, install the Qt modules the widget loads: `sudo apt install qml6-module-qtquick-localstorage qml6-module-qtquick-dialogs` (tested on Debian 13). Arch includes them in its Qt packages.
 - Python 3, for the scanner features: float, short interest, per-stock news, the dilution rating, the calendar and the long-term value lists. Standard library only, nothing to `pip install`. Without it, prices, alerts, charts, crypto and your own news sources still work, and the screener says what is missing.
 - For alert sounds, any one of `pw-play` (PipeWire), `paplay` (PulseAudio), `canberra-gtk-play` or `ffplay`, picked automatically, or your own player command in Settings → Screeners. Optional.
 

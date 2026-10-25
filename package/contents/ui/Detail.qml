@@ -721,7 +721,6 @@ ColumnLayout {
                     HoverHandler { id: themeHover }
                     PlasmaComponents3.ToolTip {
                         visible: themeHover.hovered
-                        textFormat: Text.PlainText
                         text: themeTag.tf.theme && themeTag.tf.themeHeat
                               ? Themes.explain(themeTag.tf.theme.name, themeTag.tf.themeHeat, detail.ticker.screener.themeTune) : ""
                     }
@@ -748,7 +747,6 @@ ColumnLayout {
                     HoverHandler { id: sectorHover }
                     PlasmaComponents3.ToolTip {
                         visible: sectorHover.hovered
-                        textFormat: Text.PlainText
                         text: sectorTag.sf.sector && sectorTag.sf.sectorHeat
                               ? Themes.explain(sectorTag.sf.sector.name, sectorTag.sf.sectorHeat, detail.ticker.screener.themeTune)
                                 + (sectorTag.sf.sectorBreakdown ? "\n" + i18n("Today: %1", sectorTag.sf.sectorBreakdown) : "")

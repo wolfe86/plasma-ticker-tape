@@ -992,7 +992,6 @@ ColumnLayout {
                                                     Component.onDestruction: if (containsMouse) scr.themeHover = false
                                                     PlasmaComponents3.ToolTip {
                                                         visible: parent.containsMouse && !!glyph.visible
-                                                        textFormat: Text.PlainText
                                                         text: rowItem.modelData.theme && rowItem.modelData.themeHeat
                                                               ? i18n("Theme: %1", Themes.explain(rowItem.modelData.theme.name,
                                                                                rowItem.modelData.themeHeat,
@@ -1092,7 +1091,6 @@ ColumnLayout {
                                 readonly property string dil: rowItem.modelData.dilution
                                     ? scr.dilutionText(rowItem.modelData.dilution) : ""
                                 visible: rowItem.containsMouse && !scr.themeHover && (rowItem.modelData.newsTitle || dil) !== ""
-                                textFormat: Text.PlainText
                                 text: [rowItem.modelData.newsTitle || "", dil].filter(t => t).join("\n\n")
                                 delay: Kirigami.Units.toolTipDelay
                             }

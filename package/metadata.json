@@ -13,7 +13,7 @@
         "Copyright": "© 2026 Matt Wolfe",
         "Website": "https://github.com/wolfe86/plasma-ticker-tape",
         "BugReportUrl": "https://github.com/wolfe86/plasma-ticker-tape/issues",
-        "Version": "1.2.0",
+        "Version": "1.2.1",
         "License": "GPL-2.0-or-later"
     },
     "KPackageStructure": "Plasma/Applet",

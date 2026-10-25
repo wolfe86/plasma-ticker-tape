@@ -358,7 +358,7 @@ ColumnLayout {
         Layout.fillWidth: true
         opacity: cal.past(event) && !cal.hasActual(event) ? 0.55 : 1
         onClicked: if (earn) cal.openReporter(event)
-        PlasmaComponents3.ToolTip { textFormat: Text.PlainText; text: cal.tip(row.event) }
+        PlasmaComponents3.ToolTip { text: cal.tip(row.event) }
 
         contentItem: RowLayout {
             spacing: Kirigami.Units.largeSpacing
@@ -433,7 +433,6 @@ ColumnLayout {
                 icon.name: "link"
                 onClicked: cal.openLink(row.event)
                 PlasmaComponents3.ToolTip {
-                    textFormat: Text.PlainText
                     text: parent.link ? (row.earn ? i18n("Read the press release on %1", parent.link.source)
                                                   : i18n("Read the release at %1", parent.link.source)) : ""
                 }
@@ -632,7 +631,6 @@ ColumnLayout {
                                 TapHandler { onTapped: cal.openLink(card.modelData) }
                                 PlasmaComponents3.ToolTip {
                                     visible: cardHover.hovered
-                                    textFormat: Text.PlainText
                                     text: cal.tip(card.modelData) + (cal.linkOf(card.modelData) ? "\n" + i18n("Click to read it.") : "")
                                 }
                             }
@@ -674,7 +672,6 @@ ColumnLayout {
                                         TapHandler { acceptedButtons: Qt.RightButton; onTapped: cal.openLink(tk.modelData) }
                                         PlasmaComponents3.ToolTip {
                                             visible: tkHover.hovered
-                                            textFormat: Text.PlainText
                                             text: cal.tip(tk.modelData) + "\n" + (cal.linkOf(tk.modelData)
                                                   ? i18n("Click for the chart; right-click for the press release.") : i18n("Click for the chart."))
                                         }
@@ -850,7 +847,6 @@ ColumnLayout {
                         TapHandler { onTapped: cal.openDay(cell.cellDate) }
                         PlasmaComponents3.ToolTip {
                             visible: cellHover.hovered && (cell.econ.length + cell.earn.length) > 0
-                            textFormat: Text.PlainText
                             text: cell.econ.map(e => (cal.etTime(e.when) || i18n("All day")) + "  " + e.label
                                                      + (cal.hasActual(e) ? "  → " + e.actual + cal.arrow(e) : "")).join("\n")
                                   + (cell.earn.length ? (cell.econ.length ? "\n" : "") + i18n("Earnings: %1",

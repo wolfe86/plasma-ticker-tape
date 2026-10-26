@@ -25,6 +25,9 @@ KCM.SimpleKCM {
     property alias cfg_optExpiryDays: expiryDays.value
     property real cfg_optStrikePct
     property alias cfg_ivRecord: ivRecord.checked
+    // Options are switched off for now (main.xml `optionsFeature`).
+    property bool cfg_optionsFeature
+    readonly property bool optionsOn: cfg_optionsFeature
 
     // A money or percent box: typed text in, the stored number out.
     component NumberField: QQC2.TextField {
@@ -131,8 +134,9 @@ KCM.SimpleKCM {
             }
             QQC2.Label { text: i18n("seconds") }
         }
-        Item { Kirigami.FormData.isSection: true; Kirigami.FormData.label: i18n("Options") }
+        Item { visible: page.optionsOn; Kirigami.FormData.isSection: true; Kirigami.FormData.label: i18n("Options") }
         NumberField {
+            visible: page.optionsOn
             Kirigami.FormData.label: i18n("Account size:")
             prefix: "$"
             value: page.cfg_optAccountSize
@@ -140,6 +144,7 @@ KCM.SimpleKCM {
             QQC2.ToolTip.text: i18n("For position sizing on a quote card's Options tab.")
         }
         NumberField {
+            visible: page.optionsOn
             Kirigami.FormData.label: i18n("Risk per trade:")
             suffix: "%"
             value: page.cfg_optRiskPct
@@ -147,6 +152,7 @@ KCM.SimpleKCM {
             QQC2.ToolTip.text: i18n("The share of the account one trade may lose. The Options tab says how many of a position fit it.")
         }
         NumberField {
+            visible: page.optionsOn
             Kirigami.FormData.label: i18n("Daily walk-away:")
             prefix: "$"
             value: page.cfg_optWalkAway
@@ -154,6 +160,7 @@ KCM.SimpleKCM {
             QQC2.ToolTip.text: i18n("The amount at which you stop trading for the day. The Options tab shows a position's worst case as a share of it. 0 hides that.")
         }
         NumberField {
+            visible: page.optionsOn
             Kirigami.FormData.label: i18n("Interest rate:")
             suffix: "%"
             value: page.cfg_optRate
@@ -161,6 +168,7 @@ KCM.SimpleKCM {
             QQC2.ToolTip.text: i18n("The risk-free rate used to price options (Black-Scholes), a year. A 3-month Treasury yield is the usual choice.")
         }
         RowLayout {
+            visible: page.optionsOn
             Kirigami.FormData.label: i18n("Expiry alerts:")
             QQC2.SpinBox {
                 id: expiryDays
@@ -173,6 +181,7 @@ KCM.SimpleKCM {
             QQC2.Label { text: i18n("days before expiry") }
         }
         RowLayout {
+            visible: page.optionsOn
             Kirigami.FormData.label: i18n("Strike alerts:")
             NumberField {
                 suffix: "%"
@@ -183,6 +192,7 @@ KCM.SimpleKCM {
             QQC2.Label { text: i18n("from a strike") }
         }
         QQC2.CheckBox {
+            visible: page.optionsOn
             id: ivRecord
             Kirigami.FormData.label: i18n("IV rank:")
             text: i18n("Record the watchlist's implied volatility each day")
@@ -191,6 +201,7 @@ KCM.SimpleKCM {
             QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
         }
         QQC2.Label {
+            visible: page.optionsOn
             Layout.fillWidth: true
             Layout.maximumWidth: Kirigami.Units.gridUnit * 24
             wrapMode: Text.WordWrap

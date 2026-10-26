@@ -25,7 +25,8 @@ RowLayout {
     property real size: Kirigami.Units.iconSizes.small
 
     readonly property var g: engine.groupsFor(symbol, headline)
-    readonly property string sectorStatus: g.sectorHeat ? g.sectorHeat.status : "quiet"
+    // Only themes are heat-coloured; a sector is always grey (quiet).
+    readonly property string sectorStatus: "quiet"
     readonly property string themeStatus: g.themeHeat ? g.themeHeat.status : "quiet"
     function live(st) { return st === "hot" || st === "building" }
     readonly property bool showTheme: !!g.theme && (!hotOnly || live(themeStatus))
@@ -59,7 +60,7 @@ RowLayout {
     }
     PlasmaComponents3.ToolTip {
         visible: hover.hovered
-        text: [gi.showSector ? gi.line(i18n("Sector"), gi.g.sector, gi.g.sectorHeat) : "",
+        text: [gi.showSector ? i18n("Sector: %1 (not heat-coloured)", gi.g.sector.name) : "",
                gi.showTheme ? gi.line(i18n("Theme"), gi.g.theme, gi.g.themeHeat) : ""]
               .filter(t => t).join("\n") + " " + i18n("(beta)")
               + "\n\n" + Themes.legend(gi.engine.themeTune, Plasmoid.configuration.themeRamp)

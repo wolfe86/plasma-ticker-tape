@@ -108,10 +108,20 @@ PlasmaExtras.Representation {
     readonly property real sideMargin: Kirigami.Units.smallSpacing
 
     header: PlasmaExtras.PlasmoidHeading {
-        RowLayout {
+        // The tabs and the buttons share a row when there is room for both;
+        // narrower, the buttons take a row of their own above the tabs, so
+        // the tab names are not squeezed onto two lines (Matt, 2026-10-26).
+        GridLayout {
+            id: headRow
             anchors.fill: parent
+            readonly property bool oneRow: width >= Kirigami.Units.gridUnit * 44
+            columns: oneRow ? 2 : 1
+            rowSpacing: 0
+            columnSpacing: Kirigami.Units.smallSpacing
             PlasmaComponents3.TabBar {
                 Layout.fillWidth: true
+                Layout.row: headRow.oneRow ? 0 : 1
+                Layout.column: 0
                 currentIndex: pop.tab
                 onCurrentIndexChanged: { pop.tab = currentIndex; pop.detail = null }
                 PlasmaComponents3.TabButton { text: i18n("Watchlist") }
@@ -123,51 +133,57 @@ PlasmaExtras.Representation {
                 PlasmaComponents3.TabButton { text: i18n("News") }
                 PlasmaComponents3.TabButton { text: i18n("Journal") }
             }
-            PlasmaComponents3.ToolButton {
-                icon.name: "view-refresh"
-                onClicked: pop.ticker.pollAll()
-                PlasmaComponents3.ToolTip { text: i18n("Refresh now") }
-            }
-            // Saved layouts: the screens shown, their columns and sorts, the
-            // chart settings and the chart windows.
-            PlasmaComponents3.ToolButton {
-                id: layoutsButton
-                icon.name: "bookmarks"
-                onClicked: layoutsMenu.popup(layoutsButton, 0, layoutsButton.height)
-                PlasmaComponents3.ToolTip { text: i18n("Layouts: save this setup, or switch to a saved one") }
-            }
-            // TradingView's chart for the active ticker, in a window.
-            PlasmaComponents3.ToolButton {
-                icon.name: "office-chart-line-stacked"
-                onClicked: pop.ws.newTradingView()
-                PlasmaComponents3.ToolTip { text: i18n("A TradingView chart in a new window, following the symbol you open. Click again for another, at the next bar size. Sign in from its window or Settings → Data.") }
-            }
-            // The first pop-out is the detached window; every one after it
-            // is another window on this tab and screen (WidgetWindow.qml).
-            PlasmaComponents3.ToolButton {
-                icon.name: "window-new"
-                onClicked: {
-                    if (pop.inWindow) pop.ws.openWidgetWindow(pop.tab, pop.screenId)
-                    else pop.ticker.popOut(pop.tab, pop.screenId)
+            RowLayout {
+                Layout.row: 0
+                Layout.column: headRow.oneRow ? 1 : 0
+                Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                spacing: 0
+                PlasmaComponents3.ToolButton {
+                    icon.name: "view-refresh"
+                    onClicked: pop.ticker.pollAll()
+                    PlasmaComponents3.ToolTip { text: i18n("Refresh now") }
                 }
-                PlasmaComponents3.ToolTip { text: pop.inWindow ? i18n("Pop this tab out into another window, so several tabs or screens can be watched at once")
-                                                               : i18n("Pop out into a window you can resize and keep open. Press again for another window on this tab.") }
-            }
-            PlasmaComponents3.ToolButton {
-                visible: pop.inWindow && !pop.windowId
-                icon.name: "view-restore"
-                onClicked: pop.ticker.dockBack()
-                PlasmaComponents3.ToolTip { text: i18n("Dock back to the panel") }
-            }
-            PlasmaComponents3.ToolButton {
-                icon.name: "internet-web-browser"
-                onClicked: Qt.openUrlExternally("https://finance.yahoo.com/markets/")
-                PlasmaComponents3.ToolTip { text: i18n("Open Yahoo Markets") }
-            }
-            PlasmaComponents3.ToolButton {
-                icon.name: "configure"
-                onClicked: Plasmoid.internalAction("configure").trigger()
-                PlasmaComponents3.ToolTip { text: i18n("Settings: symbols, screeners, tape and more") }
+                // Saved layouts: the screens shown, their columns and sorts, the
+                // chart settings and the chart windows.
+                PlasmaComponents3.ToolButton {
+                    id: layoutsButton
+                    icon.name: "bookmarks"
+                    onClicked: layoutsMenu.popup(layoutsButton, 0, layoutsButton.height)
+                    PlasmaComponents3.ToolTip { text: i18n("Layouts: save this setup, or switch to a saved one") }
+                }
+                // TradingView's chart for the active ticker, in a window.
+                PlasmaComponents3.ToolButton {
+                    icon.name: "office-chart-line-stacked"
+                    onClicked: pop.ws.newTradingView()
+                    PlasmaComponents3.ToolTip { text: i18n("A TradingView chart in a new window, following the symbol you open. Click again for another, at the next bar size. Sign in from its window or Settings → Data.") }
+                }
+                // The first pop-out is the detached window; every one after it
+                // is another window on this tab and screen (WidgetWindow.qml).
+                PlasmaComponents3.ToolButton {
+                    icon.name: "window-new"
+                    onClicked: {
+                        if (pop.inWindow) pop.ws.openWidgetWindow(pop.tab, pop.screenId)
+                        else pop.ticker.popOut(pop.tab, pop.screenId)
+                    }
+                    PlasmaComponents3.ToolTip { text: pop.inWindow ? i18n("Pop this tab out into another window, so several tabs or screens can be watched at once")
+                                                                   : i18n("Pop out into a window you can resize and keep open. Press again for another window on this tab.") }
+                }
+                PlasmaComponents3.ToolButton {
+                    visible: pop.inWindow && !pop.windowId
+                    icon.name: "view-restore"
+                    onClicked: pop.ticker.dockBack()
+                    PlasmaComponents3.ToolTip { text: i18n("Dock back to the panel") }
+                }
+                PlasmaComponents3.ToolButton {
+                    icon.name: "internet-web-browser"
+                    onClicked: Qt.openUrlExternally("https://finance.yahoo.com/markets/")
+                    PlasmaComponents3.ToolTip { text: i18n("Open Yahoo Markets") }
+                }
+                PlasmaComponents3.ToolButton {
+                    icon.name: "configure"
+                    onClicked: Plasmoid.internalAction("configure").trigger()
+                    PlasmaComponents3.ToolTip { text: i18n("Settings: symbols, screeners, tape and more") }
+                }
             }
         }
     }

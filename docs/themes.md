@@ -1,77 +1,124 @@
 # Themes and sectors (beta)
 
-A **theme** is a story that moves several stocks at once: a treasury company buying bitcoin, a run of drone contracts, a rare-earth push. The widget groups stocks by theme, scores each theme **hot, building, quiet or burnt** from what its members actually did that day, and shows the result on the tape, the screener and the Theme Hunter.
+A **theme** is an identifiable pattern among the stocks that run: AI headlines, oil and gas stocks on geopolitical fear, defense names on arms contracts, runners with no news at all, small foreign listings. Small caps tend to run one theme at a time, and a stock that runs with the theme of the week is more likely to hold attention and volume than one that pops on its own.
 
-A **sector** is the fallback: every stock has one, so a sector that keeps heating up is a cue to look for the story behind it. Sectors are Finviz's eleven groups for stocks and CoinGecko's categories for crypto.
+The widget puts each stock on the themes it fits, scores every theme **hot, building, quiet or burnt** from its record over the last few sessions, and shows the result on the screener, the quote card, the tape and the Theme Hunter.
 
-Themes are set up in **Settings → Themes**. The starter set (crypto treasury, Bitcoin miners, AI, nuclear and SMR, power and grid, critical minerals, drones and defense, space, cannabis) is there to edit or delete.
+A **sector** is the stock's industry group: Finviz's eleven sectors for stocks and CoinGecko's categories for crypto. Every stock has one. Sector icons are always grey, because a group the size of Healthcare has a +30% runner most days, so its heat says nothing.
+
+Themes are set up in **Settings → Themes**. The starter set is there to edit, switch off or delete.
 
 ---
 
-## 1. Setting up your first theme
+## 1. What a theme is made of
+
+A theme is a set of conditions. A stock is on the theme when it meets them:
+
+| Part | Field in Settings → Themes | How it is used |
+|---|---|---|
+| **Headline words** | the words box | The stock's newest headline contains one of them (see section 3). |
+| **Industries** | *Or Finviz industries* | The stock is in one of these Finviz industries, headline or not. |
+| **Traits** | the row of boxes under them | Every trait that is set must hold: news or no news in the last 24 hours, **Foreign** (based outside the US), **float** at or under a size, **listed** within a number of days (recent IPOs), **price** at or over / at or under, **market cap** at or under. |
+| **Pins** | right-click a screener row | The ticker is on the theme from the day it was pinned. |
+
+Words and industries say what the theme is about: when both are given, either will do. Traits narrow it, and all of them must hold. A theme can be traits alone.
+
+A stock can be on several themes at once, for example an AI headline on a foreign micro-float. Its row shows the hottest of them.
+
+### The starter themes
+
+| Theme | Pattern |
+|---|---|
+| Crypto treasury | Headline words: a coin plus *treasury*, *holdings*, *acquires* and the like |
+| Bitcoin miners | Headline words: *bitcoin mining*, *hashrate*, *exahash*… |
+| AI | Headline words: *AI*, *GPU*, *inference*, *data center*, *LLM*… |
+| Nuclear / SMR | Headline words: *SMR*, *reactor*, *uranium*… |
+| Power & grid | Headline words: *megawatt*, *substation*, *fuel cell*… |
+| Critical minerals | Headline words: *rare earth*, *antimony*, *lithium*… |
+| Drones & defense | Headline words: *drone*, *munition*, *DoD*…, or the *Aerospace & Defense* industry |
+| Space | Headline words: *satellite*, *orbital*, *lunar*… |
+| Cannabis | Headline words: *cannabis*, *THC*, *psilocybin*… |
+| No-news runners | Trait: no headline in the last 24 hours. Shown on a row only when that stock ran. |
+| Foreign low-float | Traits: based outside the US, float 10M or under |
+| Oil & gas | Industries: the six Finviz oil and gas industries |
+
+---
+
+## 2. Setting up a theme
 
 1. Open **Settings → Themes** and click **Add a theme**.
-2. Give it a name, for example *Rare earths*.
-3. Pick a glyph. It is the icon the theme shows on the tape and the screener.
-4. In the **Headline words** field, list the words a catalyst headline would contain (see section 2).
-5. Optionally, in the **Pinned tickers** field, list tickers that belong to the theme whatever their headlines say.
-6. Keep **Stocks** or switch to **Crypto**, depending on what the theme is about.
-7. Tick the box at the start of the row so the theme is on.
+2. Give it a name and pick an icon.
+3. Fill in what it is about: headline words, Finviz industries, or both. Leave both empty for a theme of traits alone.
+4. Set any traits: news, foreign, float, listing age, price, market cap. 0 means no limit.
+5. Keep **Stocks** or switch to **Crypto**.
+6. Tick the box at the start of the row so the theme is on, then **Apply**.
 
-Then wait for a stock to get a headline that matches. Its row in the screener gets the theme's glyph in the **Theme** column, and hovering over the glyph explains why.
+Past sessions are tagged again when you apply, from the headline, industry and figures saved for each stock that day.
 
 ![Settings → Themes: the theme and sector settings, with the icon colours and each sector's icon](screenshots/themes-settings.png)
 
 ![Settings → Themes: your themes, each with its glyph, headline words and pinned tickers](screenshots/themes-custom.png)
 
-To see theme tickers on the tape as well, add the Themes entry in **Settings → Symbols** (the button **Add the Themes entry (beta)**). It is starred by default, so it sits on the tape as a slot that fills with the tickers of themes running hot.
-
 ---
 
-## 2. How a stock joins a theme
-
-Each stock is placed on the first rule that fits, in this order:
-
-1. **Pinned.** The ticker is listed in the theme's pinned tickers. A pin counts from the day it was made, so earlier days are not rewritten.
-2. **Headline words.** The stock's newest headline contains one of the theme's words. The first theme in the list that matches wins.
-3. **Sticky.** The headline matched a theme recently. The stock stays on that theme for **10 sessions** (adjustable), so follow-up news without the magic words still counts.
-4. **Sector.** No theme fits, so the stock is counted in its sector instead.
-
-### Writing headline words
+## 3. Writing headline words
 
 | Syntax | Matches | Example |
 |---|---|---|
 | `word` | the word as a whole word | `uranium` matches "uranium", not "uraniumite" |
-| `word*` | any word starting with `word` | `drone*` matches "drone", "drones", "drone strike" |
+| `word*` | any word starting with `word` | `drone*` matches "drone", "drones" |
 | `a \| b` | either term | `eth \| sol` matches either |
-| `a + b` | both terms in one headline, within 60 characters | `treasury + bitcoin` |
+| `a + b` | both terms within 60 characters | `treasury + bitcoin` |
 
-Keep words specific. `ai` on its own matches far too much, so the starter AI theme uses longer phrases such as "large language" and "data center*".
+Once a headline puts a stock on a theme, it stays on it for **10 sessions** (*Stays on a theme for*), so follow-up news that does not repeat the words still counts.
 
 ---
 
-## 3. Reading the heat
+## 4. What counts as a runner
 
-Every day a theme gets a status from its members' best moves that day:
+A theme's heat comes from its **runners**. A member is a runner on a day when:
 
-| Status | Colour | What it means |
+- it was **up 30% or more** on the day at its best moment, premarket included (*A runner is up*), or **60% or more** if it had no headline in the last 24 hours (*…with no news*): 30% on nothing is ordinary for a small cap;
+- on **5 times its usual volume** or more (*…on volume of*). A move on thin volume does not count. Before the open a stock's relative volume is often not known yet, and then it is not held against it.
+
+The best moment counts, so a stock that ran 80% premarket and faded by 10:00 still ran: a premarket fade is still a tradeable pattern. The tooltip shows how much of their peak the runners kept at 10:00 and now.
+
+Members come from the screens that **feed the themes**: Running Up, High of Day and Top Gainers by default. Change it per screen in **Settings → Screeners** (*Its stocks build the theme and sector heat*). Large caps count as members too: a group of large caps moving together is often what drives a small-cap theme.
+
+A move over +200% counts only once the next check confirms it, so a single bad quote does not make a runner.
+
+---
+
+## 5. Reading the heat
+
+A theme is established by its record, not by one morning:
+
+| Status | Icon | What it means |
 |---|---|---|
-| **Hot** | red (heat ramp) | At least **2 members ran** (up 30% or more at some point during the day), and at least **2 times** the number expected from the theme's recent days. |
-| **Building** | amber | At least **1 member ran**, at least **2 members** are on it, and the runners are at least **1.5 times** what is expected. |
-| **Quiet** | grey | Nothing that qualifies. |
-| **Burnt** | blue, crossed out | It was hot, and nothing in it has run for **30 days** (adjustable). |
+| **Hot** | solid red (heat colours) | Runners on **3 of the last 5 sessions**, more often than the theme usually has them. Once hot, it **stays hot** while runners keep turning up on at least 1 of the last 5. |
+| **Building** | solid amber | A runner in the last 5 sessions, not yet hot. |
+| **Quiet** | grey outline | No runner in the last 5 sessions. |
+| **Burnt** | blue outline, crossed | It was hot, and nothing has run for **14 days**. |
 
-"Expected" is the theme's own recent average, scaled to how many members it has today. The first five sessions have no baseline yet, so a theme is judged on its runner count alone.
+"More often than usual" is measured against the theme's own record in the sessions before, once it has 10 sessions of history. It stops a broad pattern such as *no news*, which has a runner most weeks, from going hot every week. Until a theme has that history, the record alone decides.
 
-Hot and building themes show filled glyphs on the tape. Quiet and burnt themes show outlines.
+Hover a theme icon for the reading: the record session by session with its best runners (★ marks a day the theme had the day's top gainer), today's members and runners, and how much of their peak the runners kept.
 
-### Which screens feed themes
+### The Runs column
 
-Only stocks from screens that **feed the themes** count. Alert screens such as Running Up and High of Day do so by default. The list screens (Top Gainers, Top Losers, Deep Value) do not. You can change this for each screen under **Settings → Screeners**, with the option **Its stocks build the theme and sector heat**.
+**Runs 5 days** counts the sessions of the last five on which the stock itself ran, and the row's tooltip lists them: *"Ran on 2 of the last 5 sessions: +77% Mon 10-26, +144% Thu 10-23"*. A stock that keeps running is in play on its own, theme or not.
 
-### The tape
+---
 
-Theme tickers reach the tape only when the **Themes** entry is starred in **Settings → Symbols**. Then **Settings → Tape** controls the rest:
+## 6. Theme Hunter
+
+The **Theme Hunter** screen lists the themes and sectors with a reading, hottest first, with their members, and the **runners no theme claims yet**, grouped by sector. When several unclaimed runners share a headline or a trait, that is the next theme to set up.
+
+---
+
+## 7. The tape
+
+Theme tickers reach the tape only when the **Themes** entry is starred in **Settings → Symbols** (the button **Add the Themes entry (beta)**). Then **Settings → Tape** controls the rest:
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -79,49 +126,37 @@ Theme tickers reach the tape only when the **Themes** entry is starred in **Sett
 | **At most** | 10 tickers | The most theme tickers on the tape at once. |
 | **A ticker leaves when** | 20% below its session high | A running stock drops off once it fades this far from its peak. |
 | **Only tickers above their 200-day EMA** | on | Keeps only stocks trading above their 200-day average. |
-| **Replay** (outside market hours, show the last session's theme tickers) | off | Turn on to see the last session's theme tickers after the close. |
-| **Before each ticker** | The theme's name | What comes before each ticker: the theme's name, its icon, or both. |
-
-During a session, a strong theme's tickers show while they are still running. A strong theme with nothing running keeps its slot, under its name and state, until a ticker runs again or the theme fades.
+| **Replay** | off | Outside market hours, show the last session's theme tickers. |
+| **Before each ticker** | The theme's name | The theme's name, its icon, or both. |
 
 ![Settings → Tape: the theme section, with theme tickers set to hot and building themes](screenshots/settings-tape.png)
 
 ---
 
-## 4. Theme Hunter
+## 8. The settings
 
-The **Theme Hunter** screen lists:
-- the hot and building themes and sectors, with their members
-- the runners no theme claims yet
+Settings → Themes → **What counts as a theme**:
 
-If a sector keeps heating up and its runners share a headline, that is the next theme to define. Open one of its runners, read the headline, and list its words in a new theme.
+| Setting | Default |
+|---|---|
+| A runner is up | +30% on the day |
+| …with no news | +60% on the day |
+| …on volume of | 5× usual or more |
+| Hot when runners on | 3 sessions |
+| …of the last | 5 sessions |
+| Stays hot on | 1 session with runners |
+| …and beats its usual by | 1.5× |
+| Dead after | 14 days with no runner |
+| Stays on a theme for | 10 sessions after its headline |
 
----
-
-## 5. Settings that change how themes behave
-
-| Setting | Default | What it does |
-|---|---|---|
-| **Stays on a theme for** | 10 sessions | How long a stock stays on a theme after its headline last matched. |
-| **Burnt after** (shown as "days with no runner") | 30 days | Days with no runner before a theme that was hot turns burnt. Range 1 to 90. |
-| Tape: **Show tickers of themes** (Settings → Tape) | Hot themes only | Which themes' stocks appear on the tape. |
-
-Colours are set under **Settings → Themes**: a colour scheme for the icons ("Icon colours"), and a colour per theme or sector if you want one.
+Colours: a scheme for the icons (*Icon colours*: heat, market or violet), and a colour per theme if you want one.
 
 ---
 
-## 6. Tips
+## 9. Limits
 
-- **Start with pins** for a company you already know is in a theme. Headlines come and go; pins stay.
-- **Check the hover text** on the Theme column. It shows the status, runners, expected count and the reason.
-- **Expect quiet.** Most themes will be quiet most of the time. That is the design: a theme should only light up when something happens.
-- **Mind the day.** Crypto themes run on UTC days. Stock themes follow the US session.
-
----
-
-## 7. Limits
-
-- Themes come from headlines, so a theme is only as good as its words. A catalyst that the words miss will not show.
-- Ranking uses each day's best move, read while the stock was on a screen. A stock that was never on a screen that day cannot count.
-- This is a beta. The rules may change; the glyphs and the settings are the stable part.
+- **Beta.** The rules and defaults will change as they are checked against weeks of live trading.
+- **Only what was seen.** A stock counts only while it is on a screen that feeds the themes, and only while the widget is running. A day the widget was off is a day with no runners.
+- **News is what the widget can read.** Headlines come from Finviz, and from Google News for a stock Finviz has no page for. A story that only appeared elsewhere (a filing, a post) is not seen, so some "no news" runners had news.
+- **A history starts from install.** A new theme or rule re-scores the sessions already saved, but a theme of traits (foreign, float) can only be matched on days whose figures were saved, from 1.4 on.
 - Themes are a way to notice patterns, not a recommendation to trade them.

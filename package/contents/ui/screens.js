@@ -83,7 +83,7 @@ function currencyOf(screen) {
     const c = screen && screen.currency
     return currencies.find(x => x.key === c) || currencies[0]
 }
-var stocksOnly = ["gapMin", "noVolChangeMin", "noVolBounceMin", "floatMin", "floatMax", "shortMin", "dtcMin", "newsHours", "rvol5Min"]
+var stocksOnly = ["pmRunMin", "pmVolMin", "gapMin", "noVolChangeMin", "noVolBounceMin", "floatMin", "floatMax", "shortMin", "dtcMin", "newsHours", "rvol5Min"]
 function isCrypto(screen) { return !!screen && screen.market === "crypto" }
 // The same filter reads differently on a crypto screen: its change is over
 // the rolling 24 hours and its volume is dollars traded, not shares.
@@ -105,7 +105,8 @@ var rankMeasures = [
     { key: "gap",    name: "Gap %" },
     { key: "volume", name: "Volume" },
     { key: "rvol",   name: "Day RVOL" },
-    { key: "rvol5",  name: "5-min RVOL" }
+    { key: "rvol5",  name: "5-min RVOL" },
+    { key: "pmRun",  name: "Premarket run %" }
 ]
 
 // `measure` is the row field tested. `facts` marks a figure that arrives
@@ -131,6 +132,11 @@ var filterDefs = [
     // above its session low (AARD 2026-10-23, $2.30 to $2.90 while -27%).
     { key: "noVolBounceMin", label: "…or, volume short, above session low ≥", measure: "offLow", op: "novol", unit: "%" },
     { key: "rvolMin",   label: "Day RVOL at least",       measure: "rvol",       op: ">=", unit: "×" },
+    // The premarket's run (yesterday's close to the premarket high) and its
+    // share volume, from Nasdaq for stocks that reached +5% premarket; known
+    // or the row is out, so a list on them is the morning's runners only.
+    { key: "pmRunMin",  label: "Premarket run at least",  measure: "pmRun",      op: ">=", unit: "%", required: true },
+    { key: "pmVolMin",  label: "Premarket volume at least", measure: "pmVol",    op: ">=", unit: "shares", required: true },
     // Premarket, 5-minute volume is known only for stocks on the premarket
     // scanner's list; where it is not known the filter passes.
     { key: "rvol5Min",  label: "5-min RVOL at least",     measure: "rvol5",      op: ">=", unit: "%" },
@@ -282,7 +288,9 @@ var deepValueFiltersV1 = { valueMin: 6, valuation: 1, above50: 1, below200: 1, t
 // Does this screen's board feed the theme and sector tally?
 function feedsThemes(s) {
     if (typeof s.feedsThemes === "boolean") return s.feedsThemes
-    return s.type === "running" || s.type === "hod"
+    // Top Gainers too since 2026-10-26: "5 or 6 on the top gainers lists" is
+    // how a theme is seen, and big caps on it help show one (Matt).
+    return s.type === "running" || s.type === "hod" || (s.type === "ranked" && s.rankBy === "change" && !s.rankLow)
 }
 
 function load(cfg) {

@@ -15,6 +15,8 @@ can export the variables instead.
                      through.
   afterhours         The same site's after-hours gainers (its URL is
                      /markets/afterhours/gainers/, checked 2026-10-22).
+  prelevels SYM [..] Per symbol, today's premarket high, low and share
+                     volume from Nasdaq's extended-trading page.
   stocks SYM [SYM..] Per symbol, from the symbol's Finviz page: float, short
                      float, relative volume, and the newest headline -- plus
                      whether a press-wire release landed in the last two
@@ -83,6 +85,47 @@ def premarket(pm):
             for g in pm.get_premarket_gainers()]
 
 
+def _nasdaq_num(text):
+    """'$3.02 (07:27:19 AM)' -> 3.02, '2,516,965' -> 2516965.0, else None."""
+    m = re.match(r"\s*\$?([\d,]+(?:\.\d+)?)", str(text or ""))
+    return float(m.group(1).replace(",", "")) if m else None
+
+
+def prelevels(symbols):
+    """
+    Today's premarket high, low and share volume per symbol, from Nasdaq's
+    extended-trading page (consolidated tape, real time, the whole session
+    from 04:00 ET). Yahoo's quotes carry neither premarket volume nor the
+    premarket range, so without this the widget only knows the range it has
+    watched itself, which a restart loses. One request per symbol, six at a
+    time; Nasdaq answered in 1-3 s each (2026-10-26).
+    """
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(sym):
+        url = ("https://api.nasdaq.com/api/quote/" + sym
+               + "/extended-trading?markettype=pre&assetclass=stocks&time=0")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                d = json.load(r).get("data") or {}
+            rows = (d.get("infoTable") or {}).get("rows") or []
+        except Exception:
+            return sym, None
+        row = rows[0] if rows else {}
+        hi, lo = _nasdaq_num(row.get("highPrice")), _nasdaq_num(row.get("lowPrice"))
+        vol = _nasdaq_num(row.get("volume")) or 0
+        # No premarket trades yet: known to be none, not unknown.
+        return sym, {"hi": hi if hi and lo else None, "lo": lo if hi and lo else None, "vol": vol}
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        return {s: v for s, v in ex.map(one, symbols) if v is not None}
+
+
 def afterhours(pm):
     import re
     html = pm.fetch("https://stockanalysis.com/markets/afterhours/gainers/")
@@ -124,6 +167,8 @@ def stocks(pm, symbols):
             # page already being fetched, so neither costs a request.
             "sector": fv.get("Sector", ""),
             "industry": fv.get("Industry", ""),
+            # Where the company is based: the "foreign" trait of a theme pattern.
+            "country": fv.get("Country", ""),
             "newsTime": int(top["dt"].timestamp() * 1000) if top else None,
             "newsTitle": top.get("title") if top else "",
             "newsSource": top.get("source") if top else "",
@@ -298,6 +343,8 @@ def main():
             result = premarket(pm)
         elif cmd == "afterhours":
             result = afterhours(pm)
+        elif cmd == "prelevels":
+            result = prelevels(args)
         elif cmd == "dilution":
             result = dilution(args)
         elif cmd == "calendar":

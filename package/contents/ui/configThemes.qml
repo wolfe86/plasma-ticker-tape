@@ -233,6 +233,99 @@ KCM.SimpleKCM {
                     QQC2.ToolTip.text: i18n("A stock joins when its newest headline contains any of these, as whole words. drone* matches any ending (drones); eth | sol matches either; eth + holdings needs both within 60 characters.")
                 }
             }
+            // A pattern beyond headline words (2026-10-26): Finviz industries
+            // (either these or the words will do), and traits that must all hold.
+            RowLayout {
+                visible: ged.kind === "theme" && ged.g.market !== "crypto"
+                Layout.fillWidth: true
+                QQC2.TextField {
+                    Layout.fillWidth: true
+                    readonly property string stored: (ged.g.industries || []).join(", ")
+                    onStoredChanged: if (!activeFocus) text = stored
+                    Component.onCompleted: text = stored
+                    placeholderText: i18n("Or Finviz industries, comma-separated: Oil & Gas E&P")
+                    onEditingFinished: page.setGroup(ged.kind, ged.index, { industries: page.splitList(text, false) })
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("A stock in one of these industries joins, headline or not. With words too, either will do.")
+                }
+            }
+            GridLayout {
+                visible: ged.kind === "theme" && ged.g.market !== "crypto"
+                Layout.fillWidth: true
+                columns: 4
+                columnSpacing: Kirigami.Units.smallSpacing
+                rowSpacing: Kirigami.Units.smallSpacing
+                readonly property var w: ged.g.when || ({})
+                function setW(k, v) {
+                    const w = Object.assign({}, ged.g.when || {})
+                    if (v === "" || v === 0 || v === false || v === undefined) delete w[k]
+                    else w[k] = v
+                    page.setGroup(ged.kind, ged.index, { when: w })
+                }
+                QQC2.ComboBox {
+                    id: newsBox
+                    model: [i18n("News: either"), i18n("No news in 24 h"), i18n("News in 24 h")]
+                    currentIndex: parent.w.news === "none" ? 1 : parent.w.news === "some" ? 2 : 0
+                    onActivated: index => {
+                        parent.setW("news", ["", "none", "some"][index])
+                        currentIndex = Qt.binding(() => parent.w.news === "none" ? 1 : parent.w.news === "some" ? 2 : 0)
+                    }
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("Only stocks with no headline in the last 24 hours (a stock not yet looked up does not count), or only ones with one")
+                }
+                QQC2.CheckBox {
+                    text: i18n("Foreign")
+                    checked: !!parent.w.foreign
+                    onToggled: { parent.setW("foreign", checked); checked = Qt.binding(() => !!parent.w.foreign) }
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("Only companies based outside the US (Finviz's country, else Yahoo's)")
+                }
+                QQC2.SpinBox {
+                    from: 0; to: 500; editable: true
+                    value: Math.round((parent.w.floatMax || 0) / 1e6)
+                    textFromValue: (v, locale) => v ? i18n("float ≤ %1M", v) : i18n("any float")
+                    valueFromText: text => parseInt(String(text).replace(/[^0-9]/g, "")) || 0
+                    onValueModified: parent.setW("floatMax", value * 1e6)
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("Only floats at or under this many million shares (0 = any)")
+                }
+                QQC2.SpinBox {
+                    from: 0; to: 3650; stepSize: 30; editable: true
+                    value: parent.w.ipoDays || 0
+                    textFromValue: (v, locale) => v ? i18n("listed ≤ %1 days", v) : i18n("any listing date")
+                    valueFromText: text => parseInt(String(text).replace(/[^0-9]/g, "")) || 0
+                    onValueModified: parent.setW("ipoDays", value)
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("Only stocks that started trading within this many days: recent IPOs (0 = any)")
+                }
+                QQC2.SpinBox {
+                    from: 0; to: 1000; editable: true
+                    value: parent.w.priceMin || 0
+                    textFromValue: (v, locale) => v ? i18n("price ≥ $%1", v) : i18n("any low price")
+                    valueFromText: text => parseInt(String(text).replace(/[^0-9]/g, "")) || 0
+                    onValueModified: parent.setW("priceMin", value)
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("Only prices at or over this (0 = any)")
+                }
+                QQC2.SpinBox {
+                    from: 0; to: 1000; editable: true
+                    value: parent.w.priceMax || 0
+                    textFromValue: (v, locale) => v ? i18n("price ≤ $%1", v) : i18n("any high price")
+                    valueFromText: text => parseInt(String(text).replace(/[^0-9]/g, "")) || 0
+                    onValueModified: parent.setW("priceMax", value)
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("Only prices at or under this (0 = any)")
+                }
+                QQC2.SpinBox {
+                    from: 0; to: 100000; stepSize: 100; editable: true
+                    value: Math.round((parent.w.capMax || 0) / 1e6)
+                    textFromValue: (v, locale) => v ? i18n("cap ≤ $%1M", v) : i18n("any market cap")
+                    valueFromText: text => parseInt(String(text).replace(/[^0-9]/g, "")) || 0
+                    onValueModified: parent.setW("capMax", value * 1e6)
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.text: i18n("Only market caps at or under this many million dollars (0 = any)")
+                }
+            }
             RowLayout {
                 visible: ged.kind === "sector"
                 Layout.fillWidth: true
@@ -362,24 +455,31 @@ KCM.SimpleKCM {
         if (!ready) return
         const t = Themes.tune({ themeTuning: cfg_themeTuning })
         const o = {}
-        for (const k of ["ranPct", "hotRan", "liftX", "bldX", "keepDays", "minHistory", "window"]) o[k] = t[k]
+        for (const k of ["ranPct", "noNewsPct", "runRvol", "hotDays", "hotWindow", "stayDays", "liftX",
+                         "keepDays", "minHistory", "window"]) o[k] = t[k]
         let stored = {}
         try { stored = JSON.parse(cfg_themeTuning || "{}") } catch (e) {}
         // keepDays as stored, not as stretched to cover the dead line.
         o.keepDays = typeof stored.keepDays === "number" ? stored.keepDays : Themes.defaults.keepDays
-        o.ranPct = ranPct.value
-        o.hotRan = hotRan.value
-        o.liftX  = lift.value / 10
-        o.bldX   = bld.value / 10
+        o.ranPct    = ranPct.value
+        o.noNewsPct = noNewsPct.value
+        o.runRvol   = runRvol.value
+        o.hotDays   = hotDays.value
+        o.hotWindow = hotWindow.value
+        o.stayDays  = stayDays.value
+        o.liftX     = lift.value / 10
         cfg_themeTuning = JSON.stringify(o)
     }
     property bool ready: false
     Component.onCompleted: {
         const t = Themes.tune({ themeTuning: cfg_themeTuning })
-        ranPct.value = t.ranPct
-        hotRan.value = t.hotRan
-        lift.value   = Math.round(t.liftX * 10)
-        bld.value    = Math.round(t.bldX * 10)
+        ranPct.value    = t.ranPct
+        noNewsPct.value = t.noNewsPct
+        runRvol.value   = t.runRvol
+        hotWindow.value = t.hotWindow
+        hotDays.value   = t.hotDays
+        stayDays.value  = t.stayDays
+        lift.value      = Math.round(t.liftX * 10)
         ramp.currentIndex = Math.max(0, rampKeys.indexOf(cfg_themeRamp || "heat"))
         ready = true
     }
@@ -562,7 +662,7 @@ KCM.SimpleKCM {
             Kirigami.FormData.label: ""
             Layout.maximumWidth: Kirigami.Units.gridUnit * 26
             wrapMode: Text.WordWrap
-            text: i18n("What stocks are running on: a catalyst, across any sector. A stock joins when its newest headline carries one of the words, or when you pin its ticker, and stays for a while after (below). The first match in this list wins. The ones here to start with are examples: change, switch off or delete them.")
+            text: i18n("A theme is a pattern among the runners: headline words (AI, drones), an industry (oil and gas), traits (no news; foreign with a small float), or a mix. Words or industries say what it is about; traits must all hold. A stock joins every theme it fits, or one you pin it to, and stays on a headline's theme for a while after (below). Its row shows the hottest. The ones here to start with are examples: change, switch off or delete them.")
             font: Kirigami.Theme.smallFont
             opacity: 0.75
         }
@@ -611,51 +711,84 @@ KCM.SimpleKCM {
 
         QQC2.SpinBox {
             id: ranPct
-            Kirigami.FormData.label: i18n("A stock \"ran\" at:")
+            Kirigami.FormData.label: i18n("A runner is up:")
             from: 5; to: 300; stepSize: 5
             editable: true
             textFromValue: (v, locale) => i18n("+%1% on the day", v)
             valueFromText: text => parseInt(String(text).replace(/^\+/, ""))
             onValueChanged: page.pushTuning()
             QQC2.ToolTip.visible: hovered
-            QQC2.ToolTip.text: i18n("A stock counts as having run if it was up this much at any point in the session. Default +30%.")
+            QQC2.ToolTip.text: i18n("A stock with news counts as a runner if it was up this much at any point in the day, premarket included. Default +30%.")
         }
         QQC2.SpinBox {
-            id: hotRan
-            Kirigami.FormData.label: i18n("Hot needs at least:")
-            from: 1; to: 20
+            id: noNewsPct
+            Kirigami.FormData.label: i18n("…with no news:")
+            from: 5; to: 500; stepSize: 5
             editable: true
-            textFromValue: (v, locale) => i18np("%1 runner", "%1 runners", v)
+            textFromValue: (v, locale) => i18n("+%1% on the day", v)
+            valueFromText: text => parseInt(String(text).replace(/^\+/, ""))
+            onValueChanged: page.pushTuning()
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.text: i18n("A stock with no headline in the last 24 hours needs this much, since +30% on nothing is ordinary for a small cap. Default +60%.")
+        }
+        QQC2.SpinBox {
+            id: runRvol
+            Kirigami.FormData.label: i18n("…on volume of:")
+            from: 0; to: 50
+            editable: true
+            textFromValue: (v, locale) => v ? i18n("%1× usual or more", v) : i18n("any volume")
+            valueFromText: text => parseInt(text) || 0
+            onValueChanged: page.pushTuning()
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.text: i18n("Its best relative volume on the day must reach this; a move on thin volume does not count. Before the open a stock's relative volume is often not known yet, and then it is not held against it. Default 5×.")
+        }
+        QQC2.SpinBox {
+            id: hotDays
+            Kirigami.FormData.label: i18n("Hot when runners on:")
+            from: 1; to: hotWindow.value
+            editable: true
+            textFromValue: (v, locale) => i18np("%1 session", "%1 sessions", v)
             valueFromText: text => parseInt(text)
             onValueChanged: page.pushTuning()
             QQC2.ToolTip.visible: hovered
-            QQC2.ToolTip.text: i18n("How many of a theme's stocks must run on the day for it to be hot. Default 2.")
+            QQC2.ToolTip.text: i18n("A theme is hot once its stocks have run on this many of the last sessions (next). Default 3.")
+        }
+        QQC2.SpinBox {
+            id: hotWindow
+            Kirigami.FormData.label: i18n("…of the last:")
+            from: 1; to: 30
+            editable: true
+            textFromValue: (v, locale) => i18np("%1 session", "%1 sessions", v)
+            valueFromText: text => parseInt(text)
+            onValueChanged: page.pushTuning()
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.text: i18n("The sessions a theme's record is read over. Default 5, a week.")
+        }
+        QQC2.SpinBox {
+            id: stayDays
+            Kirigami.FormData.label: i18n("Stays hot on:")
+            from: 1; to: hotDays.value
+            editable: true
+            textFromValue: (v, locale) => i18np("%1 session with runners", "%1 sessions with runners", v)
+            valueFromText: text => parseInt(text)
+            onValueChanged: page.pushTuning()
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.text: i18n("Once hot, a theme stays hot while its stocks run on this many of the last sessions: a theme that lasts weeks has quiet days. Default 1.")
         }
         QQC2.SpinBox {
             id: lift
-            Kirigami.FormData.label: i18n("…and:")
+            Kirigami.FormData.label: i18n("…and beats its usual by:")
             from: 10; to: 100; stepSize: 5
             editable: true
-            textFromValue: (v, locale) => i18n("%1× its usual runners", (v / 10).toFixed(1))
+            textFromValue: (v, locale) => i18n("%1×", (v / 10).toFixed(1))
             valueFromText: text => Math.round(parseFloat(text) * 10)
             onValueChanged: page.pushTuning()
             QQC2.ToolTip.visible: hovered
-            QQC2.ToolTip.text: i18n("Hot also needs this many times the runners the theme usually has on a day like this (its usual share of all the runners on the board). Default 2×.")
-        }
-        QQC2.SpinBox {
-            id: bld
-            Kirigami.FormData.label: i18n("Building at:")
-            from: 10; to: 100; stepSize: 5
-            editable: true
-            textFromValue: (v, locale) => i18n("%1× its usual runners", (v / 10).toFixed(1))
-            valueFromText: text => Math.round(parseFloat(text) * 10)
-            onValueChanged: page.pushTuning()
-            QQC2.ToolTip.visible: hovered
-            QQC2.ToolTip.text: i18n("A theme with two or more stocks on the board, at least one of which ran, is building when it has this many times its usual runners. Default 1.5×.")
+            QQC2.ToolTip.text: i18n("To go hot, a theme must also have runners more often than it usually does, by this much. This keeps a broad pattern like \"no news\", which has a runner most weeks, from going hot every week. Default 1.5×.")
         }
         QQC2.Label {
             Kirigami.FormData.label: ""
-            text: i18n("Until a theme has %1 sessions of history it has no baseline, so it is judged on its count of runners alone and can go hot on its first day.", page.tuned.minHistory)
+            text: i18n("Building (amber): a runner in the last %1 sessions. A theme's usual rate is only used once it has %2 sessions of history; until then the record alone decides.", hotWindow.value, page.tuned.minHistory)
             wrapMode: Text.WordWrap
             opacity: 0.75
             font: Kirigami.Theme.smallFont
@@ -674,7 +807,7 @@ KCM.SimpleKCM {
             valueFromText: text => parseInt(text)
             onValueModified: page.cfg_themeDeadDays = value
             QQC2.ToolTip.visible: hovered
-            QQC2.ToolTip.text: i18n("A theme that was hot is burnt (dead) once none of its stocks has run for this many days. Until then it reads quiet, and its tooltip says when it last ran. Default 30.")
+            QQC2.ToolTip.text: i18n("A theme that was hot is burnt (dead) once none of its stocks has run for this many days. Until then it reads quiet, and its tooltip says when it last ran. Default 14.")
         }
         QQC2.Label {
             Kirigami.FormData.label: ""

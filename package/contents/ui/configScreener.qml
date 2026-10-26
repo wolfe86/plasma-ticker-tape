@@ -38,6 +38,10 @@ KCM.SimpleKCM {
     id: page
 
     property string cfg_screens
+    // Options are switched off for now (main.xml `optionsFeature`): the
+    // Unusual options screen is not offered.
+    property bool cfg_optionsFeature
+    readonly property bool optionsOn: cfg_optionsFeature
     property alias cfg_poolMinVolume: poolVol.value
     property alias cfg_poolMinAvg: poolAvg.value
     property alias cfg_alertSound: sound.checked
@@ -467,7 +471,7 @@ KCM.SimpleKCM {
             }
             // Unusual options on the watchlist, to start from, once.
             QQC2.ToolButton {
-                visible: !page.list.some(s => s.type === "uoa")
+                visible: page.optionsOn && !page.list.some(s => s.type === "uoa")
                 icon.name: "list-add"
                 text: i18n("Add unusual options")
                 onClicked: { page.commit(page.list.concat([Screens.uoaStarter()])); page.sel = page.list.length - 1 }
@@ -576,7 +580,8 @@ KCM.SimpleKCM {
                 QQC2.ComboBox {
                     Kirigami.FormData.label: i18n("Type:")
                     implicitContentWidthPolicy: QQC2.ComboBox.WidestText
-                    readonly property var choices: Screens.types.filter(t => !(Screens.isCrypto(page.cur) && Screens.stocksOnlyTypes.indexOf(t.key) >= 0))
+                    readonly property var choices: Screens.types.filter(t => !(Screens.isCrypto(page.cur) && Screens.stocksOnlyTypes.indexOf(t.key) >= 0)
+                                                                        && (t.key !== "uoa" || page.optionsOn || (page.cur && page.cur.type === "uoa")))
                     model: choices.map(t => t.name)
                     currentIndex: page.cur ? choices.findIndex(t => t.key === page.cur.type) : 0
                     onActivated: index => page.setType(choices[index].key)

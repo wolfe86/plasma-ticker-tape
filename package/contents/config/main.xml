@@ -68,6 +68,11 @@
     <entry name="losersAdded" type="Bool">
       <default>false</default>
     </entry>
+    <!-- The pattern themes (no-news runners, foreign low-float, oil & gas)
+         added once to a saved theme list (2026-10-26). -->
+    <entry name="themePatternsAdded" type="Bool">
+      <default>false</default>
+    </entry>
     <entry name="hunterAdded" type="Bool">
       <default>false</default>
     </entry>
@@ -207,9 +212,9 @@
       <default></default>
     </entry>
     <!-- A theme that was hot is burnt (dead) after this many calendar days
-         with no runner (Matt, 2026-10-24). -->
+         with no runner (Matt, 2026-10-24; 14 from 2026-10-26, "about two weeks"). -->
     <entry name="themeDeadDays" type="Int">
-      <default>30</default>
+      <default>14</default>
       <min>1</min>
       <max>90</max>
     </entry>
@@ -479,6 +484,14 @@
       <default>true</default>
     </entry>
     <!-- Draw the biggest open-interest strikes and max pain on stock charts. -->
+    <!-- The options features (the quote card's Options tab and trade
+         builder, the Unusual options screen, IV and priced-in moves, the OI
+         chart lines, the journal's option trades). Off since 2026-10-26:
+         not ready (Matt). No control in Settings; the code stays so it can
+         return. -->
+    <entry name="optionsFeature" type="Bool">
+      <default>false</default>
+    </entry>
     <entry name="chartOptionLines" type="Bool">
       <default>false</default>
     </entry>

@@ -22,7 +22,7 @@ Item {
     required property var ticker
     readonly property var screens: engine.screens.filter(s => s.type === "uoa")
     readonly property bool on: screens.length > 0
-    readonly property bool live: on && engine.currentPhase === "regular"
+    readonly property bool live: on && !!engine.cfg.optionsFeature && engine.currentPhase === "regular"
 
     function watchable(sym) { return /^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym) && !/-USD$/.test(sym) }
     function extras(sc) { return String(sc.levelTickers || "").toUpperCase().split(/[\s,;]+/).filter(t => t && watchable(t)) }

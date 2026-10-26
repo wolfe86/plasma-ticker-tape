@@ -416,14 +416,14 @@ Item {
             const x = new XMLHttpRequest()
             x.onreadystatechange = () => {
                 if (x.readyState !== XMLHttpRequest.DONE) return
-                if (x.status === 401) { ticker.crumb = ""; finishPool(); return }
+                if (x.status === 401) { ticker.crumb = ""; finishPool(false); return }
                 let res = null
                 try { res = JSON.parse(x.responseText).finance.result[0] } catch (e) {}
-                if (!res) { finishPool(); return }
+                if (!res) { finishPool(false); return }
                 building = building.concat(res.quotes.map(q => q.symbol).filter(validSymbol))
                 // 250 a page, up to 5,000 stocks.
                 if (offset + 250 < Math.min(res.total, 5000)) poolPage(offset + 250)
-                else finishPool()
+                else finishPool(true)
             }
             x.open("POST", "https://query1.finance.yahoo.com/v1/finance/screener?crumb=" + encodeURIComponent(c))
             x.setRequestHeader("User-Agent", "Mozilla/5.0")
@@ -443,9 +443,16 @@ Item {
             }))
         })
     }
-    function finishPool() {
-        // A failed first page keeps the old pool rather than emptying it.
-        if (building.length > 0) pool = building
+    // Yahoo refusing a page part-way (a 429 under load) must not shrink the
+    // pool: the pages come biggest volume first, so a short pool drops the
+    // thin stocks that wake up premarket -- WORX ran +30% at 06:18 CT on
+    // 2026-10-26 with no alert on any screen after 06:02. An incomplete
+    // refresh adds what it got to the old pool instead of replacing it.
+    property bool poolPartial: false
+    function finishPool(complete) {
+        if (complete && building.length > 0) pool = building
+        else if (building.length > 0) pool = Array.from(new Set(pool.concat(building)))
+        poolPartial = !complete
         building = []
         candidates = Array.from(new Set(pool.concat(extra, valueUniverse)))
         source = i18n("active market")
@@ -453,12 +460,27 @@ Item {
 
     // ── slow facts per candidate ──────────────────────────────────────────
     function refreshInfo(symbols) {
-        const stale = (symbols || candidates).filter(s => !info[s] || Date.now() - info[s].at > 15 * 60000)
-        if (stale.length === 0) return
+        const now = Date.now()
+        const stale = (symbols || candidates).filter(s => !info[s] || now - info[s].at > 15 * 60000)
+        // Breaking news: the alert and the headline often land in the same
+        // minute, and Finviz lists a story a little after it crosses -- VBIO
+        // 2026-10-26 alerted at 08:00:24 ET on an 08:00 ACCESSWIRE story
+        // and showed "none in 2 days" for the next 15 minutes. Press
+        // releases cross on the hour and the half hour, so a stock on the
+        // screens with no catalyst yet has its news alone asked for again
+        // every minute in the first five minutes of each half hour (:00-:05,
+        // :30-:35), and not between.
+        const mm = etMinutes(now / 1000) % 30
+        const fresh = mm > 5 ? [] : (symbols || []).filter(s => stale.indexOf(s) < 0 && info[s] && !info[s].catalyst
+                                                && now - (info[s].newsAt || 0) >= 55000)
+        if (stale.length === 0 && fresh.length === 0) return
         // Mark now, so an overlapping round does not ask twice.
         const next = Object.assign({}, info)
-        for (const s of stale) next[s] = Object.assign({}, next[s] || {}, { at: Date.now() })
+        for (const s of stale) next[s] = Object.assign({}, next[s] || {}, { at: now, newsAt: now })
+        for (const s of fresh) next[s] = Object.assign({}, next[s], { newsAt: now })
         info = next
+        for (let i = 0; i < fresh.length; i += 15) { const b = fresh.slice(i, i + 15); bridgeRun(["stocks"].concat(b), out => mergeStocks(out, b)) }
+        if (stale.length === 0) return
 
         // In batches of 15, so one bridge call stays well inside its
         // 60-second timeout even when Finviz is slow.
@@ -472,22 +494,65 @@ Item {
             for (const s in out) n[s] = Object.assign({}, n[s], { dilution: out[s] })
             info = n
         })
-        bridgeRun(["stocks"].concat(stale), mergeStocks)
+        bridgeRun(["stocks"].concat(stale), out => mergeStocks(out, stale))
     }
-    function mergeStocks(out) {
+    // `asked`: the symbols the bridge was asked about. Finviz has no page for
+    // some listings (AZTR, NYSE American, 2026-10-26: a 404), which left them
+    // with no headline, sector or float; those, and any it gave no headline
+    // for, get Google News's newest story the way the quote card does, and
+    // Yahoo's company profile stands in for the sector (yahooFacts).
+    function mergeStocks(out, asked) {
         if (!out) return
         const n = Object.assign({}, info)
         for (const s in out) {
             const o = out[s]
+            const y = n[s] || {}
+            const google = y.newsVia === "google" && y.newsTime > (o.newsTime || 0)
             n[s] = Object.assign({}, n[s], {
                 finvizFloat: o.float, shortFloat: o.shortFloat,
-                sector: o.sector || "", industry: o.industry || "",
-                catalyst: o.catalyst, newsTime: o.newsTime,
-                newsTitle: o.newsTitle, newsSource: o.newsSource, newsUrl: o.newsUrl || "",
+                sector: o.sector || y.yahooSector || "", industry: o.industry || y.yahooIndustry || "",
+                country: o.country || y.yahooCountry || "",
+                catalyst: o.catalyst || (google && y.catalyst),
+                newsTime: google ? y.newsTime : o.newsTime,
+                newsTitle: google ? y.newsTitle : o.newsTitle, newsSource: google ? y.newsSource : o.newsSource,
+                newsUrl: google ? y.newsUrl : o.newsUrl || "", newsVia: google ? "google" : "finviz",
                 scanner: true
             })
         }
         info = n
+        googleNews((asked || []).filter(s => !(out[s] && out[s].newsTime)).slice(0, 10))
+    }
+    // The newest Google News story on each symbol, by company name or ticker,
+    // from the last two days -- the quote card's fallback, for the row's news
+    // icon and catalyst flag. A press-wire source counts as a catalyst, as on
+    // Finviz (the scanner's PR_WIRES).
+    function googleNews(syms) {
+        for (const sym of syms) {
+            if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(sym)) continue
+            const n0 = info[sym] || {}
+            const name = String(n0.name || (quotes[sym] || {}).name || "")
+                .replace(/,?\s+(Inc\.?|Incorporated|Corporation|Corp\.?|Company|Co\.?|Ltd\.?|Limited|plc|Holdings?|Group|S\.A\.|N\.V\.)$/i, "")
+            const q = (name ? '"' + name + '" OR ' : "") + sym + " when:2d"
+            ticker.yget("https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=en-US&gl=US&ceid=US:en", x => {
+                const item = String(x.responseText || "").split("<item>").slice(1).map(it => {
+                    const get = tag => { const r = it.match(new RegExp("<" + tag + "[^>]*>([\\s\\S]*?)</" + tag + ">")); return r ? r[1].replace(/<!\[CDATA\[|\]\]>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").trim() : "" }
+                    const source = get("source")
+                    let title = get("title")
+                    if (source && title.endsWith(" - " + source)) title = title.slice(0, -(source.length + 3))
+                    return { title: title, url: get("link"), source: source, time: Date.parse(get("pubDate")) }
+                }).filter(it => it.title && isFinite(it.time)).sort((a, b) => b.time - a.time)[0]
+                if (!item) return
+                const cur = info[sym] || {}
+                if (cur.newsTime >= item.time) return
+                const n = Object.assign({}, info)
+                const wire = /newswire|business ?wire|accesswire|newsfile|mediawire/i.test(item.source)
+                n[sym] = Object.assign({}, cur, {
+                    newsTime: item.time, newsTitle: item.title, newsSource: item.source, newsUrl: item.url,
+                    newsVia: "google", catalyst: !!cur.catalyst || (wire && Date.now() - item.time < 2 * 86400000)
+                })
+                info = n
+            })
+        }
     }
     // Sector, industry and newest headline -- enough for the sector and theme
     // icons -- for stocks the Calendar and News tabs show that no screen has
@@ -525,7 +590,7 @@ Item {
         groupBusy = true
         bridgeRun(["stocks"].concat(batch), out => {
             groupBusy = false
-            if (out) mergeStocks(out)
+            if (out) mergeStocks(out, batch)
             else {
                 // Refused or timed out: the hourly "asked" mark would keep
                 // the whole batch blank for an hour (SLB, FIX, T and BE on
@@ -559,12 +624,22 @@ Item {
         ticker.withCrumb(c => {
             for (const s of stale) {
                 ticker.yget("https://query2.finance.yahoo.com/v10/finance/quoteSummary/" + encodeURIComponent(s)
-                            + "?modules=summaryDetail,defaultKeyStatistics,price&crumb=" + encodeURIComponent(c), x => {
+                            + "?modules=summaryDetail,defaultKeyStatistics,price,assetProfile&crumb=" + encodeURIComponent(c), x => {
                     try {
                         const r = JSON.parse(x.responseText).quoteSummary.result[0]
                         const raw = (m, k) => r[m] && r[m][k] && typeof r[m][k].raw === "number" ? r[m][k].raw : NaN
                         const n = Object.assign({}, info)
+                        // Yahoo's sector, industry and country, kept apart and
+                        // used where Finviz has none (no Finviz page). Its
+                        // sector names differ from Finviz's in one place.
+                        const ap = r.assetProfile || {}
+                        const ysec = ap.sector === "Financial Services" ? "Financial" : (ap.sector || "")
+                        const ycty = ap.country === "United States" ? "USA" : (ap.country || "")
+                        const had = n[s] || {}
                         n[s] = Object.assign({}, n[s], {
+                            yahooSector: ysec, yahooIndustry: ap.industry || "", yahooCountry: ycty,
+                            sector: had.sector || ysec, industry: had.industry || ap.industry || "",
+                            country: had.country || ycty,
                             name: (r.price && (r.price.shortName || r.price.longName)) || "",
                             yahooFloat: raw("defaultKeyStatistics", "floatShares"),
                             shortShares: raw("defaultKeyStatistics", "sharesShort"),
@@ -594,7 +669,8 @@ Item {
         "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayHigh",
         "regularMarketDayLow", "regularMarketVolume", "regularMarketTime", "preMarketPrice", "preMarketTime",
         "postMarketPrice", "postMarketTime", "averageDailyVolume3Month", "averageDailyVolume10Day",
-        "fiftyDayAverage", "twoHundredDayAverage", "fiftyTwoWeekHigh", "fiftyTwoWeekLow"].join(",")
+        "fiftyDayAverage", "twoHundredDayAverage", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
+        "firstTradeDateMilliseconds"].join(",")
     // Could this stock pass any stock alert screen? Read from its last quote
     // with half again of margin on price and cap, so a stock nearing a
     // screen's range is asked for before it gets there. Unquoted: yes.
@@ -675,10 +751,16 @@ Item {
         if (!(price > 0)) return
         const now = Date.now()
         const pm = pmVol[sym] || []
+        // Today's premarket from Nasdaq (pmLevels), where this stock has been
+        // looked up: the premarket high, low and volume.
+        const lv = pmLevels[sym]
         // Overnight volume is not known: regularMarketVolume is the last
-        // regular session's.
-        const volume = ph === "pre" ? (pm.length ? pm[pm.length - 1].v : NaN)
+        // regular session's. Premarket, the larger of the two sources' --
+        // a running total only grows, and the premarket list lags.
+        let volume = ph === "pre" ? Math.max(pm.length ? pm[pm.length - 1].v : -1, lv ? lv.vol : -1)
                      : ph === "overnight" ? NaN : q.regularMarketVolume
+        if (volume < 0) volume = NaN
+        const rvolVol = ph === "pre" ? (pm.length ? pm[pm.length - 1].v : NaN) : volume
         const avg = q.averageDailyVolume3Month || q.averageDailyVolume10Day
         // Premarket, Yahoo's regular-session fields still describe
         // yesterday: regularMarketPrice is yesterday's close and
@@ -717,13 +799,30 @@ Item {
             gap: q.regularMarketOpen > 0 && prev > 0 && ph !== "pre" && ph !== "overnight"
                  ? (q.regularMarketOpen / prev - 1) * 100 : (prev > 0 ? (price / prev - 1) * 100 : NaN),
             volume: volume,
-            rvol: avg > 0 && Number.isFinite(volume) ? volume / avg : NaN,
+            // Premarket, RVOL stays what it was before the Nasdaq volumes:
+            // the premarket list's volume where there is one, else unknown.
+            // Premarket shares against a whole day's average is a small
+            // number by nature (WORX 2026-10-26: 4.2M against 4.5M, 0.93),
+            // so filling it in for every runner turned High of Day's
+            // RVOL >= 5 from "not judged" into "fails" and stopped its
+            // premarket alerts.
+            rvol: avg > 0 && Number.isFinite(rvolVol) ? rvolVol / avg : NaN,
             rvol5: rvol5,
             marketCap: q.marketCap,
+            // When it listed: the "recent IPO" trait of a theme pattern.
+            firstTrade: q.firstTradeDateMilliseconds || NaN,
             avgVol: q.averageDailyVolume3Month || q.averageDailyVolume10Day,
             ma50: q.fiftyDayAverage, ma200: q.twoHundredDayAverage,
             low52: q.fiftyTwoWeekLow, high52: q.fiftyTwoWeekHigh,
-            shares: q.sharesOutstanding
+            shares: q.sharesOutstanding,
+            pmHigh: lv && lv.hi > 0 ? lv.hi : NaN,
+            pmLow: lv && lv.lo > 0 ? lv.lo : NaN,
+            // How far it ran in the premarket: yesterday's close to the
+            // premarket high, and on how many shares. Fixed once the
+            // premarket ends, so after the open it sits beside the day's
+            // change: which stocks ran premarket, and which in the session.
+            pmRun: lv && lv.hi > 0 && prev > 0 ? (lv.hi / prev - 1) * 100 : NaN,
+            pmVol: lv && lv.vol >= 0 ? lv.vol : NaN
         }
         quotes[sym] = r
         // Closed: the quote is the last close and is not moving, so there is
@@ -731,17 +830,24 @@ Item {
         if (ph === "closed") return
 
         // The session's low so far: Yahoo's day low in regular hours,
-        // otherwise the lowest price seen this session.
-        const sessionLow = ph === "regular" && q.regularMarketDayLow > 0 ? q.regularMarketDayLow : NaN
+        // otherwise the lowest price seen this session -- and in both, the
+        // premarket low where it is known, so a restart does not forget it.
+        const sessionLow = Math.min(ph === "regular" && q.regularMarketDayLow > 0 ? q.regularMarketDayLow : Infinity,
+                                    (ph === "pre" || ph === "regular") && r.pmLow > 0 ? r.pmLow : Infinity)
         const low = Math.min(seenLow[sym] === undefined ? Infinity : seenLow[sym],
-                             Number.isFinite(sessionLow) ? sessionLow : price, price)
+                             Math.min(sessionLow, price))
         seenLow[sym] = low
         r.offLow = low > 0 ? (price / low - 1) * 100 : NaN
 
         // The session's high so far. Regular hours: Yahoo's day high, which
         // includes this price. Otherwise the highest price seen this session.
+        // The premarket high counts in both, until it is broken: a stock
+        // under its premarket high at 09:45 has not made a high of day,
+        // whatever the regular session's own high says.
         const st = seenHigh[sym]
-        const sessionHigh = ph === "regular" && q.regularMarketDayHigh > 0 ? q.regularMarketDayHigh : NaN
+        const sh = Math.max(ph === "regular" && q.regularMarketDayHigh > 0 ? q.regularMarketDayHigh : -Infinity,
+                            (ph === "pre" || ph === "regular") && r.pmHigh > 0 ? r.pmHigh : -Infinity)
+        const sessionHigh = sh > 0 ? sh : NaN
         if (first || st === undefined) {
             // First sight: seed, never alert -- a stock already up 40% at
             // start-up is not running up this instant.
@@ -757,7 +863,11 @@ Item {
     // and quote-level filters. `prior` is the high before this price.
     function marketOf(sc) { return sc && sc.market === "crypto" ? "crypto" : "stocks" }
     function fire(market, sym, r, h, price, prior, now) {
-        const newHigh = price > prior
+        // At the high counts as breaking it when the last pass was under it:
+        // the premarket high from Nasdaq can be the very print this pass
+        // is sampling.
+        const prevP = h.length > 1 ? h[h.length - 2].p : price
+        const newHigh = price > prior || (price >= prior && prevP < prior)
         for (const sc of screens) {
             if (marketOf(sc) !== market) continue
             if (sc.type === "running") {
@@ -772,13 +882,16 @@ Item {
                 const key = sc.id + ":" + sym
                 const last = lastRun[key]
                 if ((price / lo - 1) * 100 >= (sc.runPct || 3) && price > hi
-                        && !(last && now - last.t < winMs && price <= last.p)
-                        && Screens.passes(sc, inCurrency(sc, r), "quote")) {
-                    lastRun[key] = { t: now, p: price }
-                    raise(sc.id, r)
+                        && !(last && now - last.t < winMs && price <= last.p)) {
+                    if (Screens.passes(sc, inCurrency(sc, r), "quote")) {
+                        lastRun[key] = { t: now, p: price }
+                        raise(sc.id, r)
+                    } else if (market === "stocks") recheckWithLevels(sc, sym, price)
                 }
             } else if (sc.type === "hod") {
-                if (newHigh && Screens.passes(sc, inCurrency(sc, r), "quote")) raise(sc.id, r)
+                if (!newHigh) continue
+                if (Screens.passes(sc, inCurrency(sc, r), "quote")) raise(sc.id, r)
+                else if (market === "stocks") recheckWithLevels(sc, sym, price)
             }
         }
     }
@@ -804,6 +917,136 @@ Item {
         }
         ranked = next
     }
+    // ── premarket levels ──────────────────────────────────────────────────
+    // Today's premarket high, low and volume per runner, from Nasdaq through
+    // the bridge (`prelevels`). Yahoo's quotes have no premarket volume and
+    // no premarket range, so before this a premarket stock's volume was
+    // unknown unless it was on the top-20 premarket list, and its low was
+    // the lowest price this widget had happened to see -- which a restart
+    // reset (CLRO 2026-10-26 alerted 2.5 minutes late on exactly that).
+    //
+    // Runners -- up `pmRunnerMin`% on yesterday's close, or on the premarket
+    // list -- are looked up from 04:00 ET and kept fresh every minute, so
+    // the levels are known before the trading morning starts and the list
+    // grows into the open. The stocks in play change from session to
+    // session -- the morning's report is rarely the day's leaders -- so the
+    // runners are found from the whole pool every pass, never a fixed list.
+    // In the regular session, a stock that reaches the threshold without
+    // levels from after the premarket's end gets them once: the premarket
+    // is final by then, and its high stays a level until it is broken. The
+    // levels are saved per session, so a restart keeps them.
+    property var pmLevels: ({})           // symbol -> {hi, lo, vol, t}
+    property var pmAsked: ({})            // symbol -> when last asked
+    property var pmWaiting: ({})          // symbol -> {screen id: true} alerts held for a look-up
+    property bool pmSweeping: false
+    readonly property real pmRunnerMin: 5
+    function sweepLevels() {
+        const ph = phase()
+        const now = Date.now()
+        const m = etMinutes(now / 1000)
+        const regular = ph === "regular"
+        if (pmSweeping || !(ph === "pre" || regular)) return
+        const runners = new Set(ph === "pre" ? extra : [])
+        for (const sym in quotes) if (quotes[sym].change >= pmRunnerMin) runners.add(sym)
+        const due = Array.from(runners).filter(s => regular
+                ? !pmAsked[s] || pmAsked[s] < now - (m - openAt + 1) * 60000
+                : now - (pmAsked[s] || 0) >= 60000)
+            .sort((a, b) => (pmAsked[a] || 0) - (pmAsked[b] || 0))
+            .slice(0, 30)
+        if (due.length) askLevels(due, false)
+    }
+    function askLevels(syms, urgent) {
+        const now = Date.now()
+        for (const s of syms) pmAsked[s] = now
+        if (!urgent) pmSweeping = true
+        bridgeRun(["prelevels"].concat(syms), out => {
+            if (!urgent) pmSweeping = false
+            if (!out || typeof out !== "object" || out.error) return
+            const t = Date.now()
+            const got = []
+            for (const s in out) {
+                const v = out[s]
+                if (!v) continue
+                pmLevels[s] = { hi: v.hi, lo: v.lo, vol: v.vol, t: t }
+                got.push(s)
+            }
+            storeLevels(got)
+            for (const s of syms) {
+                const w = pmWaiting[s]
+                if (!w) continue
+                delete pmWaiting[s]
+                for (const id in w) recheck(id, s, w[id])
+            }
+        }, 40, urgent)
+    }
+    // An alert whose trigger fired but whose filters did not pass, premarket,
+    // on a stock without fresh levels: usually the volume is not known yet.
+    // Look the stock up at once and test the filters again with the real
+    // figures, instead of letting it through or dropping it.
+    function recheckWithLevels(sc, sym, price) {
+        if (phase() !== "pre") return
+        const lv = pmLevels[sym]
+        if (lv && Date.now() - lv.t < 60000) return
+        // Only where the levels could change the answer: a stock out of the
+        // screen's price or cap range is not worth a look-up.
+        const r = quotes[sym]
+        if (!r || !Screens.passes(sc, Object.assign({}, inCurrency(sc, r), { volume: 1e15, rvol: 1e6, offLow: 1e6 }), "quote")) return
+        const w = pmWaiting[sym] || {}
+        const asking = Object.keys(w).length > 0
+        w[sc.id] = price
+        pmWaiting[sym] = w
+        if (!asking) askLevels([sym], true)
+    }
+    function recheck(id, sym, price) {
+        const sc = screen(id), r = quotes[sym], lv = pmLevels[sym]
+        if (!sc || !r || !lv) return
+        // The quote's figures again, with the levels in.
+        if (lv.vol >= 0 && !(r.volume >= lv.vol)) r.volume = lv.vol
+        if (lv.hi > 0) r.pmHigh = lv.hi
+        if (lv.vol >= 0) r.pmVol = lv.vol
+        if (lv.hi > 0 && r.price > 0 && Number.isFinite(r.change)) r.pmRun = (lv.hi / (r.price / (1 + r.change / 100)) - 1) * 100
+        if (lv.lo > 0) {
+            r.pmLow = lv.lo
+            seenLow[sym] = Math.min(seenLow[sym] === undefined ? Infinity : seenLow[sym], lv.lo)
+            r.offLow = (r.price / seenLow[sym] - 1) * 100
+        }
+        if (!Screens.passes(sc, inCurrency(sc, r), "quote")) return
+        if (sc.type === "running") lastRun[sc.id + ":" + sym] = { t: Date.now(), p: price }
+        raise(sc.id, r)
+    }
+    function storeLevels(syms) {
+        if (!syms.length || !openDb()) return
+        const d = sessionDay
+        db.transaction(tx => {
+            tx.executeSql("CREATE TABLE IF NOT EXISTS pmlevels (day TEXT, symbol TEXT, hi REAL, lo REAL, vol REAL, at INTEGER, PRIMARY KEY (day, symbol))")
+            for (const s of syms) {
+                const v = pmLevels[s]
+                tx.executeSql("INSERT OR REPLACE INTO pmlevels VALUES (?, ?, ?, ?, ?, ?)", [d, s, v.hi, v.lo, v.vol, v.t])
+            }
+        })
+    }
+    function loadLevels() {
+        pmLevels = ({}); pmAsked = ({}); pmWaiting = ({})
+        if (!openDb()) return
+        const next = {}, asked = {}
+        db.transaction(tx => {
+            tx.executeSql("CREATE TABLE IF NOT EXISTS pmlevels (day TEXT, symbol TEXT, hi REAL, lo REAL, vol REAL, at INTEGER, PRIMARY KEY (day, symbol))")
+            const rs = tx.executeSql("SELECT symbol, hi, lo, vol, at FROM pmlevels WHERE day = ?", [sessionDay])
+            for (let i = 0; i < rs.rows.length; i++) {
+                const x = rs.rows.item(i)
+                next[x.symbol] = { hi: x.hi, lo: x.lo, vol: x.vol, t: x.at }
+                asked[x.symbol] = x.at
+            }
+            tx.executeSql("DELETE FROM pmlevels WHERE day < ?", [sessionDay])
+        })
+        pmLevels = next
+        pmAsked = asked
+    }
+    Timer {
+        interval: 15000; running: true; repeat: true
+        onTriggered: eng.sweepLevels()
+    }
+
     property var seenHigh: ({})           // symbol -> session high so far
     property var seenLow: ({})            // symbol -> session low so far
     property var lastRun: ({})            // symbol -> {t, p} of its last Running Up alert
@@ -1017,6 +1260,7 @@ Item {
             sessionDay = sd
             loadThemes()                      // the finished session joins the history
             feeds = ({}); restore()           // and its alerts stay on show while closed
+            loadLevels()                      // this session's premarket levels, if any yet
         }
         const d = Qt.formatDate(new Date(), "yyyy-MM-dd")
         if (d === day) return
@@ -1073,29 +1317,52 @@ Item {
         if (industry) for (const s of userSectors) if ((s.industries || []).indexOf(industry) >= 0) return groupInfo(s.id)
         return finviz ? Themes.sectorById(finviz) : null
     }
-    // The theme a stock is running on: one it is pinned to (from the day
-    // the pin was made), else the first whose words its headline carries
-    // (and, if the theme names sectors, only in those), else the one its
-    // headline last matched, for `stickySessions` sessions after -- a
-    // treasury stock's follow-up news ("Acquires 176,271 ETH") need not
-    // repeat the words that put it on the theme. `market` keeps stock and
-    // crypto themes apart; `day` (default: the live session) is the day
-    // asked about, for re-tagging history. The result's `via` says which
-    // rule placed it: "pin", "words" or "sticky".
-    function themeFor(sym, headline, market, sectorId, day) {
+    // The themes a stock is on, in your list's order: those it is pinned to
+    // (from the day the pin was made), and every theme whose pattern it fits
+    // (Themes.themeMatches: headline words or industry, and traits). A stock
+    // whose headline matched no theme's words stays on the one its headline
+    // last matched for `stickySessions` sessions after -- a treasury stock's
+    // follow-up news ("Acquires 176,271 ETH") need not repeat the words that
+    // put it on the theme. `market` keeps stock and crypto themes apart;
+    // `day` (default: the live session) is the day asked about, for
+    // re-tagging history. `f` is what is known about the stock
+    // (themeFacts); just a headline and sector will do. Each result's `via`
+    // says which rule placed it: "pin", "words", "pattern" or "sticky".
+    function themesFor(sym, f, market, day) {
         const mine = userThemes.filter(t => (t.market || "stocks") === market)
         const on = (t, via) => Object.assign(groupInfo(t.id), { via: via })
-        for (const t of mine) if (Themes.pinnedOn(t, sym, day || (market === "crypto" ? cryptoDay : sessionDay))) return on(t, "pin")
+        const out = []
         for (const t of mine) {
-            if (t.sectors && t.sectors.length && t.sectors.indexOf(sectorId) < 0) continue
-            if (Themes.headlineMatches(t, headline)) return on(t, "words")
+            if (Themes.pinnedOn(t, sym, day || (market === "crypto" ? cryptoDay : sessionDay))) out.push(on(t, "pin"))
+            else if (Themes.themeMatches(t, f)) out.push(on(t, Themes.matchedBy(t, f)))
         }
-        const k = day ? null : themeSticky[sym]
-        if (k && sessionsSince(k.day, market) < themeTune.stickySessions) {
-            const t = mine.find(x => x.id === k.theme)
-            if (t) return on(t, "sticky")
+        if (!out.some(x => x.via === "words")) {
+            const k = day ? null : themeSticky[sym]
+            if (k && sessionsSince(k.day, market) < themeTune.stickySessions && !out.some(x => x.id === k.theme)) {
+                const t = mine.find(x => x.id === k.theme)
+                if (t) out.push(on(t, "sticky"))
+            }
         }
-        return null
+        return out
+    }
+    // The first of them, for callers that want one.
+    function themeFor(sym, headline, market, sectorId, day) {
+        return themesFor(sym, { headline: headline, sector: sectorId }, market, day)[0] || null
+    }
+    // What a theme pattern can test about a stock now.
+    function themeFacts(sym, headline, sectorId) {
+        const n = info[sym] || {}, q = quotes[sym] || {}
+        const fl = n.finvizFloat > 0 ? n.finvizFloat : n.yahooFloat
+        const mine = newsFor(sym)
+        const newest = Math.max(n.newsTime || 0, mine ? mine.time || 0 : 0)
+        return {
+            headline: headline, sector: sectorId || "", industry: n.industry || "",
+            country: n.country || "", float: fl > 0 ? fl : NaN, price: q.price, cap: q.marketCap,
+            // News in the last 24 hours: known once Finviz has been read for it,
+            // or once a news source has a story on it.
+            news: newest > 0 ? Date.now() - newest < 24 * 3600000 : (n.scanner ? false : null),
+            ipoDays: q.firstTrade > 0 ? (Date.now() - q.firstTrade) / 86400000 : NaN
+        }
     }
     // Sticky membership: symbol -> {theme, day} of the last session its
     // headline matched a theme while it was on a screen. Kept beside the
@@ -1131,13 +1398,34 @@ Item {
         return Object.keys(count).sort((a, b) => count[b] - count[a]).map(k => k + " " + count[k]).join(", ")
     }
 
-    function themeOf(sym) {
+    // Every theme a stock is on now.
+    function themesOf(sym) {
         const mine = newsFor(sym)
-        if (cquotes[sym]) return themeFor(sym, mine ? mine.title : "", "crypto", "")
+        if (cquotes[sym]) return themesFor(sym, { headline: mine ? mine.title : "" }, "crypto")
         const n = info[sym]
         const headline = mine && (!n || !n.newsTime || mine.time > n.newsTime) ? mine.title : (n ? n.newsTitle : "")
         const s = sectorOf(sym)
-        return themeFor(sym, headline, "stocks", s ? s.id : "")
+        return themesFor(sym, themeFacts(sym, headline, s ? s.id : ""), "stocks")
+    }
+    // The one its row shows: the hottest, the first in your list on a tie.
+    // A "no news" theme is a pattern among runners, not a label for every
+    // quiet stock (Matt, 2026-10-26: GCTK, a drug maker up 20% with no
+    // headline, showed No-news runners): it shows only on a stock that ran.
+    function themeOf(sym) {
+        const l = themesOf(sym).filter(t => {
+            const def = userThemes.find(x => x.id === t.id)
+            if (!def || !def.when || def.when.news !== "none" || t.via === "pin") return true
+            const m = (themeLive[t.id] || {})[sym]
+            return !!m && Themes.isRunner(m, themeTune)
+        })
+        if (l.length < 2) return l[0] || null
+        const rank = { hot: 3, building: 2, burnt: 1, quiet: 0 }
+        let best = l[0], br = rank[themeStatus(l[0].id).status] || 0
+        for (let i = 1; i < l.length; i++) {
+            const r = rank[themeStatus(l[i].id).status] || 0
+            if (r > br) { best = l[i]; br = r }
+        }
+        return best
     }
 
     // Has this symbol run on this theme in the last 5 stored sessions? A live
@@ -1166,30 +1454,66 @@ Item {
         const next = {}
         const dirty = []
         const stuck = []
+        // 10:00 New York time and after: how much of its peak each runner kept.
+        const at10 = phase() === "regular" && etMinutes(Date.now() / 1000) >= 600
         for (const sym of sourceSymbols("stocks")) {
             const n = info[sym] || {}
             const q = quotes[sym]
             if (!q || !isFinite(q.change)) continue
-            const th = cfg.themesOn ? themeOf(sym) : null
-            if (th && th.via === "words") stuck.push([sym, th.id])
-            // A stock counts towards its theme, if any, and its sector.
-            for (const t of [th, cfg.sectorsOn ? sectorOf(sym) : null]) {
+            // A move over +200% counts only once the next pass confirms it:
+            // single bad quotes filed HKPD +1910%, PPCB +922%, COCH +899% and
+            // CHOW +831% on 2026-10-26, all up a few percent that day.
+            const was = themeSeen[sym]
+            themeSeen[sym] = q.change
+            if (q.change >= 200 && !(was >= q.change * 0.8)) continue
+            const ths = cfg.themesOn ? themesOf(sym) : []
+            const w = ths.find(x => x.via === "words")
+            if (w) stuck.push([sym, w.id])
+            const f = themeFacts(sym, n.newsTitle || "", "")
+            // Its best on the day in any group so far: a stock that joins a
+            // theme late (its news aged into "no news", or a restart added a
+            // theme) brings its morning's peak and volume with it.
+            let dayPeak = -Infinity, dayRvol = -1
+            for (const id in themeLive) {
+                const o = themeLive[id][sym]
+                if (!o) continue
+                if (o.peak > dayPeak) dayPeak = o.peak
+                if (o.rvol > dayRvol) dayRvol = o.rvol
+            }
+            // A stock counts towards every theme it is on, and its sector.
+            for (const t of ths.concat(cfg.sectorsOn ? [sectorOf(sym)] : [])) {
                 if (!t) continue
                 const risk = n.dilution && n.dilution.risk
                 const prev = (themeLive[t.id] || {})[sym]
-                const peak = Math.max(q.change, prev ? prev.peak : -Infinity)
+                const peak = Math.max(q.change, prev ? prev.peak : -Infinity, dayPeak)
                 const shell = risk === "EXTREME" || risk === "HIGH"
+                const rvol = Math.max(isFinite(q.rvol) ? q.rvol : -1, prev && isFinite(prev.rvol) ? prev.rvol : -1, dayRvol)
                 if (!next[t.id]) next[t.id] = Object.assign({}, themeLive[t.id] || {})
                 const m = {
                     peak: peak,
                     shell: shell,
                     fresh: prev ? prev.fresh : themeFresh(t.id, sym),
                     industry: n.industry || "",
-                    headline: n.newsTitle || ""
+                    headline: n.newsTitle || "",
+                    // Once news is seen on the day it stays: a runner that had
+                    // news at 07:00 is not "no news" because the story aged.
+                    news: f.news === true || (prev && prev.news === true) ? true : f.news,
+                    rvol: rvol >= 0 ? rvol : NaN,
+                    cap: isFinite(q.marketCap) ? q.marketCap : (prev ? prev.cap : NaN),
+                    float: isFinite(f.float) ? f.float : (prev ? prev.float : NaN),
+                    country: f.country || (prev ? prev.country : ""),
+                    ipoDays: isFinite(f.ipoDays) ? f.ipoDays : (prev ? prev.ipoDays : NaN),
+                    last: q.change,
+                    at10: prev && isFinite(prev.at10) ? prev.at10 : (at10 ? q.change : NaN)
                 }
                 next[t.id][sym] = m
-                if (!prev || prev.peak !== peak || prev.shell !== shell)
+                // Written when something that scores it changes; the latest
+                // change only when it moved 2 points, to keep the writes down.
+                if (!prev || prev.peak !== peak || prev.shell !== shell || prev.news !== m.news
+                        || (m.rvol >= 0 && !(prev.rvol >= m.rvol - 0.5)) || (isFinite(m.at10) && !isFinite(prev.at10))
+                        || !(Math.abs(m.last - prev.last) < 2) || prev.country !== m.country)
                     dirty.push([t.id, sym, n.industry || "", n.newsTitle || "", m])
+                else next[t.id][sym] = Object.assign({}, m, { last: prev.last })
             }
         }
         // Themes whose members all left the board keep their tally for the day.
@@ -1200,6 +1524,9 @@ Item {
         if (dirty.length) storeMembers(dirty)
         noteSticky(stuck, sessionDay)
     }
+    // Each symbol's change at the last tally pass, for confirming huge moves.
+    // Filled in place: nothing binds to it.
+    property var themeSeen: ({})
     // The session the tally is running in joins the session list, once.
     function noteSession(market, d) {
         const l = themeSessions[market] || []
@@ -1246,7 +1573,9 @@ Item {
         const d = Themes.readDay(m, themeTune)
         d.syms = Object.keys(m)
         d.d = liveDayOf(id)
-        d.board = liveBoard[isCryptoGroup(id) ? "crypto" : "stocks"]
+        const mk = isCryptoGroup(id) ? "crypto" : "stocks"
+        d.board = liveBoard[mk]
+        d.led = !!liveLeader[mk] && d.runners.some(x => x.symbol === liveLeader[mk].symbol)
         return d
     }
     // Today's runners across the whole board, per market: every symbol in
@@ -1256,18 +1585,40 @@ Item {
         const ran = { stocks: {}, crypto: {} }
         for (const id in themeLive) {
             const mk = isCryptoGroup(id) ? "crypto" : "stocks", m = themeLive[id]
-            for (const s in m) if (m[s].peak >= themeTune.ranPct) ran[mk][s] = true
+            for (const s in m) if (Themes.isRunner(m[s], themeTune)) ran[mk][s] = true
         }
         return { stocks: Object.keys(ran.stocks).length, crypto: Object.keys(ran.crypto).length }
+    }
+    // Today's leader per market so far: the biggest runner across every group.
+    readonly property var liveLeader: {
+        const out = { stocks: null, crypto: null }
+        for (const id in themeLive) {
+            const mk = isCryptoGroup(id) ? "crypto" : "stocks", m = themeLive[id]
+            for (const s in m)
+                if (Themes.isRunner(m[s], themeTune) && (!out[mk] || m[s].peak > out[mk].peak)) out[mk] = { symbol: s, peak: m[s].peak }
+        }
+        return out
     }
     // A group's reading, live: today's tally against its finished sessions
     // (Themes.status, opts.live). Before the day's first runner, and out of
     // hours, that is the last finished session's own reading; today can
     // raise a status but never burn one. A group with no stored rows still
     // has the session calendar behind it (all empty).
+    // Worked out once per change to the tally, the history or the tuning,
+    // not on every call: every row asks for every theme it is on, and the
+    // record rules (2026-10-26) re-read each group's sessions, which made
+    // the pop-up slow. `themeGen` is read so bindings still follow changes.
+    property int themeGen: 0
+    onThemeLiveChanged: themeGen++
+    onThemeHistChanged: themeGen++
+    onThemeEmptyChanged: themeGen++
+    property var statusMemo: ({ gen: -1, m: {} })     // filled in place
     function themeStatus(id) {
+        const g = themeGen
+        if (statusMemo.gen !== g) { statusMemo.gen = g; statusMemo.m = {} }
+        if (statusMemo.m[id]) return statusMemo.m[id]
         const hist = themeHist[id] || themeEmpty[isCryptoGroup(id) ? "crypto" : "stocks"] || []
-        return Themes.status(hist, themeToday(id), themeTune, { live: true })
+        return (statusMemo.m[id] = Themes.status(hist, themeToday(id), themeTune, { live: true }))
     }
     // Per market: the finished sessions as empty readings, for groups with
     // no history of their own.
@@ -1291,6 +1642,15 @@ Item {
                 "CREATE TABLE IF NOT EXISTS thememembers (day TEXT, theme TEXT, symbol TEXT, "
                 + "industry TEXT, headline TEXT, peak REAL, shell INTEGER, fresh INTEGER, "
                 + "PRIMARY KEY (day, theme, symbol))")
+                // What the 2026-10-26 rules score on: news in 24 hours (1/0,
+                // null = not known), best RVOL, market cap, float, country,
+                // days since listing, the latest change and the change at 10:00.
+                const cols = tx.executeSql("PRAGMA table_info(thememembers)")
+                const have = {}
+                for (let i = 0; i < cols.rows.length; i++) have[cols.rows.item(i).name] = true
+                for (const [c, ty] of [["news", "INTEGER"], ["rvol", "REAL"], ["cap", "REAL"], ["float", "REAL"],
+                                       ["country", "TEXT"], ["ipodays", "REAL"], ["last", "REAL"], ["at10", "REAL"]])
+                    if (!have[c]) tx.executeSql("ALTER TABLE thememembers ADD COLUMN " + c + " " + ty)
                 // Every session the tally ran, so a session in which a group
                 // had nobody still counts in its history (2026-10-24).
                 tx.executeSql("CREATE TABLE IF NOT EXISTS themesessions (day TEXT, market TEXT, PRIMARY KEY (day, market))")
@@ -1314,9 +1674,25 @@ Item {
         if (!d || !openThemeDb()) return
         db.transaction(tx => {
             for (const [id, sym, industry, headline, m] of rows)
-                tx.executeSql("INSERT OR REPLACE INTO thememembers VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                              [d, id, sym, industry, headline, m.peak, m.shell ? 1 : 0, m.fresh ? 1 : 0])
+                tx.executeSql(memberInsert, [d, id, sym, industry, headline].concat(memberValues(m)))
         })
+    }
+    readonly property string memberInsert: "INSERT OR REPLACE INTO thememembers "
+        + "(day, theme, symbol, industry, headline, peak, shell, fresh, news, rvol, cap, float, country, ipodays, last, at10) "
+        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    // A member's stored figures, in memberInsert's order after the headline.
+    function memberValues(m) {
+        const num = x => typeof x === "number" && isFinite(x) ? x : null
+        return [m.peak, m.shell ? 1 : 0, m.fresh ? 1 : 0, m.news === true ? 1 : m.news === false ? 0 : null,
+                num(m.rvol), num(m.cap), num(m.float), m.country || "", num(m.ipoDays), num(m.last), num(m.at10)]
+    }
+    // A stored row back into a member.
+    function memberOf(r) {
+        const num = x => x === null || x === undefined || x === "" ? NaN : Number(x)
+        return { peak: Number(r.peak), shell: !!r.shell, fresh: !!r.fresh, industry: r.industry || "",
+                 headline: r.headline || "", news: r.news === 1 ? true : r.news === 0 ? false : null,
+                 rvol: num(r.rvol), cap: num(r.cap), float: num(r.float), country: r.country || "",
+                 ipoDays: num(r.ipodays), last: num(r.last), at10: num(r.at10) }
     }
     // A crypto theme's day is the UTC date; a stock theme's the session.
     function liveDayOf(id) { return isCryptoGroup(id) ? cryptoDay : sessionDay }
@@ -1356,11 +1732,10 @@ Item {
                 const r = st.rows.item(i)
                 sticky[r.symbol] = { theme: r.theme, day: r.day }
             }
-            const rs = tx.executeSql("SELECT day, theme, symbol, industry, headline, peak, shell, fresh FROM thememembers")
+            const rs = tx.executeSql("SELECT * FROM thememembers")
             for (let i = 0; i < rs.rows.length; i++) {
                 const r = rs.rows.item(i)
-                const m = { peak: Number(r.peak), shell: !!r.shell, fresh: !!r.fresh, industry: r.industry || "",
-                            headline: r.headline || "" }
+                const m = memberOf(r)
                 sess[isCryptoGroup(r.theme) ? "crypto" : "stocks"][r.day] = true
                 if (r.day === liveDayOf(r.theme)) {
                     (live[r.theme] = live[r.theme] || {})[r.symbol] = m
@@ -1370,16 +1745,24 @@ Item {
                 }
             }
         })
-        // Finished sessions per market, and the board's runners on each.
-        const lists = {}, board = { stocks: {}, crypto: {} }
+        // Finished sessions per market, the board's runners on each, and
+        // each one's leader: the day's biggest runner across every group.
+        const lists = {}, board = { stocks: {}, crypto: {} }, leader = { stocks: {}, crypto: {} }
+        const runs = {}                       // symbol -> {day: peak}, stocks
         for (const mk of ["stocks", "crypto"]) {
             const now = mk === "crypto" ? cryptoDay : sessionDay
             lists[mk] = Object.keys(sess[mk]).filter(d => d !== now).sort()
         }
         for (const id in days) {
             const mk = isCryptoGroup(id) ? "crypto" : "stocks"
-            for (const d in days[id]) for (const s in days[id][d])
-                if (days[id][d][s].peak >= t.ranPct) (board[mk][d] = board[mk][d] || {})[s] = true
+            for (const d in days[id]) for (const s in days[id][d]) {
+                const m = days[id][d][s]
+                if (!Themes.isRunner(m, t)) continue
+                ;(board[mk][d] = board[mk][d] || {})[s] = true
+                const L = leader[mk][d]
+                if (!L || m.peak > L.peak) leader[mk][d] = { symbol: s, peak: m.peak }
+                if (mk === "stocks") (runs[s] = runs[s] || {})[d] = m.peak
+            }
         }
         const reading = (mk, id, d) => {
             const m = id && days[id] ? days[id][d] : null
@@ -1387,6 +1770,7 @@ Item {
             r.d = d
             r.syms = m ? Object.keys(m) : []
             r.board = board[mk][d] ? Object.keys(board[mk][d]).length : 0
+            r.led = !!(m && leader[mk][d] && r.runners.some(x => x.symbol === leader[mk][d].symbol))
             return r
         }
         const out = {}, last = {}
@@ -1407,14 +1791,37 @@ Item {
             if (sess[mk][now]) all[mk].push(now)
         }
         themeSessions = all
+        themeRuns = runs
         themeSticky = sticky
         themeEmpty = empty
         themeHist = out
         themeLastDay = last
         themeLive = live
     }
+    // Each stock's runner days in the stored sessions: symbol -> {day: peak}.
+    property var themeRuns: ({})
+    // A stock that keeps running: its runner days in the last `hotWindow`
+    // sessions, today included -- the repeat-runner flag (CLRO: +144% on
+    // 2026-10-23, +77% on 2026-10-26). {n, days: [{d, peak}], text}.
+    function repeatRuns(sym) {
+        const l = (themeSessions.stocks || []).slice(-themeTune.hotWindow)
+        const past = themeRuns[sym] || {}
+        const out = []
+        for (const d of l) {
+            let peak = d === sessionDay ? NaN : past[d]
+            if (d === sessionDay) for (const id in themeLive) {
+                const m = themeLive[id][sym]
+                if (m && Themes.isRunner(m, themeTune)) { peak = m.peak; break }
+            }
+            if (isFinite(peak)) out.push({ d: d, peak: peak })
+        }
+        return { n: out.length, days: out,
+                 text: out.length ? i18np("Ran on %1 of the last %2 sessions: ", "Ran on %1 of the last %2 sessions: ", out.length, l.length)
+                                    + out.slice().reverse().map(x => "+" + Math.round(x.peak) + "% " + Themes.dayName(x.d) + " " + x.d.slice(5)).join(", ")
+                                  : "" }
+    }
     // A threshold changed in Settings → Themes: score the history again.
-    onThemeTuneChanged: loadThemes()
+    onThemeTuneChanged: { themeGen++; loadThemes() }
 
     // ── Theme Hunter ──────────────────────────────────────────────────────
     // Every theme and sector with a reading, ranked hottest first, and the
@@ -1453,7 +1860,7 @@ Item {
         const unclaimed = []
         for (const sec of sectors) {
             const src = themeLive[sec.id] && Object.keys(themeLive[sec.id]).length ? themeLive[sec.id] : (themeLastDay[sec.id] || {}).members || {}
-            const rows = Object.keys(src).filter(k => src[k].peak >= themeTune.ranPct && !claimed(k))
+            const rows = Object.keys(src).filter(k => Themes.isRunner(src[k], themeTune) && !claimed(k))
                 .map(k => ({ symbol: k, peak: src[k].peak, headline: src[k].headline || (info[k] || {}).newsTitle || ((newsFor(k) || {}).title || "") }))
                 .sort((a, b) => b.peak - a.peak)
             if (rows.length) unclaimed.push({ id: sec.id, name: sec.name, glyph: sec.glyph, status: sec.status, rows: rows })
@@ -1617,16 +2024,23 @@ Item {
             }
             const known = tx.executeSql("SELECT industry, sector FROM industrysectors")
             for (let i = 0; i < known.rows.length; i++) indSector[known.rows.item(i).industry] = known.rows.item(i).sector
-            const rs = tx.executeSql("SELECT day, theme, symbol, industry, headline, peak, shell FROM thememembers WHERE theme NOT LIKE 'c-%' AND symbol NOT LIKE '%-USD'")
+            const rs = tx.executeSql("SELECT * FROM thememembers WHERE theme NOT LIKE 'c-%' AND symbol NOT LIKE '%-USD'")
             const by = {}
             for (let i = 0; i < rs.rows.length; i++) {
                 const r = rs.rows.item(i)
+                const m = memberOf(r)
                 const k = r.day + "|" + r.symbol
-                const g = by[k] = by[k] || { day: r.day, symbol: r.symbol, industry: "", headline: "", peak: -Infinity, shell: false, sector: "" }
+                const g = by[k] = by[k] || { day: r.day, symbol: r.symbol, industry: "", headline: "", sector: "",
+                                             m: Object.assign({}, m, { peak: -Infinity, shell: false }) }
                 g.industry = g.industry || r.industry || ""
                 g.headline = g.headline || r.headline || ""
-                g.peak = Math.max(g.peak, Number(r.peak))
-                g.shell = g.shell || !!r.shell
+                // The figures are the same on each of a day's rows for a
+                // stock; take whichever row has them.
+                for (const f of ["rvol", "cap", "float", "ipoDays", "last", "at10"]) if (!isFinite(g.m[f]) && isFinite(m[f])) g.m[f] = m[f]
+                if (g.m.news === null && m.news !== null) g.m.news = m.news
+                if (!g.m.country && m.country) g.m.country = m.country
+                g.m.peak = Math.max(g.m.peak, m.peak)
+                g.m.shell = g.m.shell || m.shell
                 if (Themes.isSector(r.theme)) g.sector = r.theme
             }
             // The stock sessions, in order: the session list plus every
@@ -1650,15 +2064,21 @@ Item {
                 const finviz = (String(g.sector).indexOf("s-") === 0 ? g.sector : "") || indSector[g.industry] || ""
                 const sec = sectorForSym(g.symbol, g.industry, finviz)
                 const sector = sec ? sec.id : ""
-                let th = themeFor(g.symbol, g.headline, "stocks", sector, g.day)
-                if (th && th.via === "words") lastMatch[g.symbol] = { theme: th.id, day: g.day }
-                if (!th) {
+                // The day's facts as stored; its price was not, so a theme
+                // with a price range only matches from the day it was made.
+                const f = { headline: g.headline, sector: sector, industry: g.industry, country: g.m.country,
+                            float: g.m.float, price: NaN, cap: g.m.cap, news: g.m.news, ipoDays: g.m.ipoDays }
+                const on = themesFor(g.symbol, f, "stocks", g.day)
+                const ths = on.map(x => x.id)
+                const w = on.find(x => x.via === "words")
+                if (w) lastMatch[g.symbol] = { theme: w.id, day: g.day }
+                else {
                     const k = lastMatch[g.symbol]
-                    if (k && sessIdx[g.day] - sessIdx[k.day] < themeTune.stickySessions
+                    if (k && sessIdx[g.day] - sessIdx[k.day] < themeTune.stickySessions && ths.indexOf(k.theme) < 0
                           && userThemes.some(x => x.id === k.theme && (x.market || "stocks") === "stocks"))
-                        th = { id: k.theme }
+                        ths.push(k.theme)
                 }
-                for (const id of [th ? th.id : "", sector]) if (id) rows.push([g.day, id, g.symbol, g.industry, g.headline, g.peak, g.shell ? 1 : 0])
+                for (const id of ths.concat([sector])) if (id) rows.push([g.day, id, g.symbol, g.industry, g.headline, g.m])
             }
             // "fresh": not a member of the same group in its previous 5 sessions.
             const seen = {}       // id -> {day: Set(symbols)}
@@ -1669,12 +2089,10 @@ Item {
                 let fresh = true
                 for (let j = Math.max(0, i - 5); j < i && fresh; j++) if (byDay[sessions[j]] && byDay[sessions[j]].has(r[2])) fresh = false
                 ;(byDay[r[0]] = byDay[r[0]] || new Set()).add(r[2])
-                out.push(r.concat([fresh ? 1 : 0]))
+                out.push([r[0], r[1], r[2], r[3], r[4]].concat(memberValues(Object.assign({}, r[5], { fresh: fresh }))))
             }
             tx.executeSql("DELETE FROM thememembers WHERE theme NOT LIKE 'c-%' AND symbol NOT LIKE '%-USD'")
-            for (const r of out)
-                tx.executeSql("INSERT OR REPLACE INTO thememembers VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                              [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]])
+            for (const r of out) tx.executeSql(memberInsert, r)
             // The newest match per stock, unless the live tally has a newer one.
             for (const sym in lastMatch) {
                 const k = themeSticky[sym]
@@ -2321,6 +2739,23 @@ Item {
             } catch (e) {}
             Plasmoid.configuration.hunterAdded = true
         }
+        // The pattern themes (no-news runners, foreign low-float, oil & gas)
+        // joined the starters on 2026-10-26, and Drones & defense took its
+        // industry too. A saved theme list gets them once; deleting them
+        // later sticks.
+        if (cfg.customThemes && !cfg.themePatternsAdded) {
+            try {
+                const l = JSON.parse(cfg.customThemes)
+                if (Array.isArray(l)) {
+                    for (const t of Themes.patternStarters())
+                        if (!l.some(x => x.id === t.id)) l.push(Object.assign({}, t, { tickers: [] }))
+                    const def = l.find(x => x.id === "defense")
+                    if (def && !(def.industries && def.industries.length)) def.industries = Themes.defenseIndustries()
+                    Plasmoid.configuration.customThemes = JSON.stringify(l)
+                }
+            } catch (e) {}
+        }
+        Plasmoid.configuration.themePatternsAdded = true
         // Top Losers joined the starting list the same day; added once too.
         if (cfg.screens && !cfg.losersAdded) {
             try {
@@ -2565,10 +3000,12 @@ Item {
     // row so a scorecard rule can test them like any other measure.
     function themeFields(sym) {
         if (!cfg.themesOn) return { theme: null }
+        const rr = repeatRuns(sym)
         const t = themeOf(sym)
-        if (!t) return { theme: null }
+        if (!t) return { theme: null, runs: rr.n, runsText: rr.text }
         const s = themeStatus(t.id)
         return {
+            runs: rr.n, runsText: rr.text,
             theme: t,
             themeStatus: ["burnt", "quiet", "building", "hot"].indexOf(s.status),
             themeHeat: s,

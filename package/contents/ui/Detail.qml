@@ -456,7 +456,7 @@ ColumnLayout {
         dil = null; localValue = null; valueLoading = false
         optIv = null; earnMove = null; optLines = null
         about.expanded = false
-        if (entry.tab !== undefined && !chartOnly) tab = entry.tab
+        if (entry.tab !== undefined && !chartOnly) tab = entry.tab === 2 && !optionsOn ? 0 : entry.tab
         load(); refresh(); loadLevels()
         if (!chartOnly) {
             if (f.type === "EQUITY") loadDilution()
@@ -487,7 +487,11 @@ ColumnLayout {
     // priced in through its next earnings, in the figures; and, with
     // `chartOptionLines`, its biggest open-interest strikes and max pain on
     // the chart. From Yahoo's chain, delayed (Workspace.qml).
-    readonly property bool optionable: kind === "EQUITY" || kind === "ETF"
+    // Options are switched off for now (`optionsFeature`, 2026-10-26).
+    readonly property bool optionsOn: Plasmoid.configuration.optionsFeature
+    readonly property bool optionable: optionsOn && (kind === "EQUITY" || kind === "ETF")
+    // The card's tabs by number: 0 Overview, 1 News, 2 Options, 3 Notes.
+    readonly property var tabIds: optionsOn ? [0, 1, 2, 3] : [0, 1, 3]
     property var optIv: null
     property var earnMove: null
     property var optLines: null
@@ -586,6 +590,10 @@ ColumnLayout {
         const earn = ce && ce.earningsDate ? ce.earningsDate.map(d => d.fmt).join(" - ")
                    + (ce.isEarningsDateEstimate ? " (est.)" : "") : ""
         const rec = summary && summary[fd] && summary[fd].recommendationKey
+        // The float the screener scores on: Finviz's, else Yahoo's -- in the
+        // Quote list beside volume, where a momentum trader looks for it.
+        const n = ticker.screener.info[entry.symbol] || {}
+        const fl = n.finvizFloat > 0 ? Scorecards.fmt(n.finvizFloat) : v(ks, "floatShares")
         const out = [
             { title: i18n("Quote"), rows: [
                 [i18n("Previous Close"), v(sd, "previousClose")],
@@ -596,6 +604,7 @@ ColumnLayout {
                 [i18n("52 Week Range"), pair(v(sd, "fiftyTwoWeekLow"), v(sd, "fiftyTwoWeekHigh"))],
                 [i18n("Volume"), v(sd, "volume", true)],
                 [i18n("Avg. Volume"), v(sd, "averageVolume", true)],
+                [i18n("Float"), fl],
                 [i18n("Volume (24h)"), v(sd, "volume24Hr")],
                 [i18n("Market Cap"), v(sd, "marketCap")],
                 [i18n("Beta (5Y Monthly)"), v(sd, "beta")],
@@ -619,7 +628,6 @@ ColumnLayout {
                 [i18n("Max Supply"), v(sd, "maxSupply")]
             ]},
             { title: i18n("Shares and short interest"), rows: [
-                [i18n("Float"), v(ks, "floatShares")],
                 [i18n("Shares Outstanding"), v(ks, "sharesOutstanding")],
                 [i18n("Short % of Float"), v(ks, "shortPercentOfFloat")],
                 [i18n("Short Ratio (days)"), v(ks, "shortRatio")],
@@ -840,11 +848,12 @@ ColumnLayout {
                               ? Themes.explain(themeTag.tf.theme.name, themeTag.tf.themeHeat, detail.ticker.screener.themeTune) : ""
                     }
                 }
-                // The sector, heat-coloured the same way, with today's industry mix.
+                // The sector, always grey (only themes are heat-coloured), with
+                // today's industry mix on hover.
                 RowLayout {
                     id: sectorTag
                     readonly property var sf: detail.ticker.screener.sectorFields(detail.entry.symbol)
-                    readonly property string st: sf.sectorHeat ? sf.sectorHeat.status : "quiet"
+                    readonly property string st: "quiet"
                     readonly property color col: Themes.colour(st, (sf.sector && sf.sector.ramp) || Plasmoid.configuration.themeRamp)
                     visible: !!sf.sector
                     spacing: 2
@@ -855,15 +864,15 @@ ColumnLayout {
                         icons: { try { return JSON.parse(Plasmoid.configuration.themeIcons || "{}") } catch (e) { return ({}) } }
                     }
                     PlasmaComponents3.Label {
-                        text: sectorTag.sf.sector ? sectorTag.sf.sector.name + " · " + sectorTag.st : ""
+                        text: sectorTag.sf.sector ? sectorTag.sf.sector.name : ""
                         font: Kirigami.Theme.smallFont
                         color: sectorTag.st === "quiet" ? Kirigami.Theme.disabledTextColor : sectorTag.col
                     }
                     HoverHandler { id: sectorHover }
                     PlasmaComponents3.ToolTip {
                         visible: sectorHover.hovered
-                        text: sectorTag.sf.sector && sectorTag.sf.sectorHeat
-                              ? Themes.explain(sectorTag.sf.sector.name, sectorTag.sf.sectorHeat, detail.ticker.screener.themeTune)
+                        text: sectorTag.sf.sector
+                              ? i18n("Sector: %1 (not heat-coloured; only themes are)", sectorTag.sf.sector.name)
                                 + (sectorTag.sf.sectorBreakdown ? "\n" + i18n("Today: %1", sectorTag.sf.sectorBreakdown) : "")
                               : ""
                     }
@@ -1058,14 +1067,21 @@ ColumnLayout {
     PlasmaComponents3.TabBar {
         visible: !detail.chartOnly
         Layout.fillWidth: true
-        currentIndex: detail.tab
-        onCurrentIndexChanged: detail.tab = currentIndex
-        PlasmaComponents3.TabButton { text: i18n("Overview") }
-        PlasmaComponents3.TabButton { text: i18n("News") }
-        PlasmaComponents3.TabButton { text: i18n("Options"); enabled: detail.optionable }
-        PlasmaComponents3.TabButton {
-            readonly property int n: detail.ws.notes.filter(x => x.symbol === detail.entry.symbol).length
-            text: n ? i18n("Notes (%1)", n) : i18n("Notes")
+        // `detail.tab` keeps its numbers (0 Overview, 1 News, 2 Options,
+        // 3 Notes) whether or not the Options tab is offered.
+        currentIndex: Math.max(0, detail.tabIds.indexOf(detail.tab))
+        onCurrentIndexChanged: if (currentIndex >= 0 && currentIndex < detail.tabIds.length) detail.tab = detail.tabIds[currentIndex]
+        // Not `parent.ids`: inside a TabBar a Repeater's parent is the bar's
+        // content item, which has no such property, and no tab was made.
+        Repeater {
+            model: detail.tabIds
+            PlasmaComponents3.TabButton {
+                required property int modelData
+                readonly property int n: modelData === 3 ? detail.ws.notes.filter(x => x.symbol === detail.entry.symbol).length : 0
+                enabled: modelData !== 2 || detail.optionable
+                text: modelData === 0 ? i18n("Overview") : modelData === 1 ? i18n("News") : modelData === 2 ? i18n("Options")
+                    : n ? i18n("Notes (%1)", n) : i18n("Notes")
+            }
         }
     }
     Loader {
@@ -1770,9 +1786,16 @@ ColumnLayout {
     // figure, the target and whether it passed. The figures are the ones
     // the screen listed, with the latest float, news and dilution merged
     // in. A scorecard made only of the long-term checks is shown by the
-    // fundamentals section below instead.
-    readonly property var card: entry.scorecard ? ticker.screener.scorecard(entry.scorecard) : null
-    readonly property var cardRow: entry.row ? ticker.screener.withFacts(entry.row) : null
+    // fundamentals section below instead. Opened with no screen (the symbol
+    // box, recent tickers, a linked click), a stock gets the first scorecard
+    // with live rules -- Small-cap momentum to start -- scored on its latest
+    // quote from the stock list.
+    readonly property var card: entry.scorecard ? ticker.screener.scorecard(entry.scorecard)
+        : kind === "EQUITY" ? (ticker.screener.scorecards || []).find(c => c.rules.some(r => !/^p[1-8]$/.test(r.measure))) || null
+        : null
+    readonly property var cardRow: entry.row ? ticker.screener.withFacts(entry.row)
+        : card && ticker.screener.quotes[entry.symbol] ? ticker.screener.withFacts(ticker.screener.quotes[entry.symbol])
+        : null
     readonly property bool cardShown: !!card && !!cardRow && card.rules.some(r => !/^p[1-8]$/.test(r.measure))
     readonly property var cardScore: cardShown ? Scorecards.score(card, cardRow) : null
     ColumnLayout {

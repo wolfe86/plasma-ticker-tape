@@ -221,6 +221,7 @@ ColumnLayout {
     }
     // Over a theme glyph, its tooltip shows instead of the row's.
     property bool themeHover: false
+    property bool scoreHover: false
     // The rows, rebuilt at most once a second and only while this tab is on
     // screen. Facts arrive a hundred times a minute; rebuilding the table on
     // each one, hidden or not, cost plasmashell hundreds of megabytes.
@@ -512,8 +513,14 @@ ColumnLayout {
         { key: "time",    title: Plasmoid.configuration.timesLocal ? i18n("Time") : i18n("Time (ET)"), w: 6.4, alert: true },
         { key: "symbol",  title: i18n("Symbol"),         w: 4.6 },
         { key: "theme",   title: i18n("Theme\nbeta"),    w: 2.8 },
+        // Repeat runner: sessions of the last 5 it ran on (CLRO, 2026-10-26).
+        { key: "runs",    title: i18n("Runs\n5 days"),   w: 3.2, on: "momentum" },
         { key: "score",   title: i18n("Score"),          w: 4.4 },
         { key: "price",   title: i18n("Price"),          w: 4.2 },
+        { key: "pmHigh",  title: i18n("PM\nhigh"),       w: 4.2, on: "momentum" },
+        { key: "pmLow",   title: i18n("PM\nlow"),        w: 4.2, on: "momentum" },
+        { key: "pmRun",   title: i18n("PM run\n%"),      w: 3.6, on: "momentum" },
+        { key: "pmVol",   title: i18n("PM\nvolume"),     w: 4.4, on: "momentum", off: true },
         { key: "volume",  title: i18n("Volume"),         w: 4.6, on: "momentum" },
         { key: "float",   title: i18n("Float"),          w: 4.2, on: "momentum" },
         { key: "rvol",    title: i18n("RVOL\nday"),      w: 3.4, on: "momentum" },
@@ -560,7 +567,7 @@ ColumnLayout {
     // Crypto has no float, short interest, gap, 5-minute volume or
     // filings, so those columns are not offered on a crypto screen.
     readonly property bool isCrypto: Screens.isCrypto(current)
-    readonly property var stockColumns: ["float", "rvol5", "gap", "short", "dilution", "pe5", "pfcf", "roic", "vs50", "trend", "maSlope", "offHigh", "off52"]
+    readonly property var stockColumns: ["runs", "pmHigh", "pmLow", "pmRun", "pmVol", "float", "rvol5", "gap", "short", "dilution", "pe5", "pfcf", "roic", "vs50", "trend", "maSlope", "offHigh", "off52"]
     function possible(c) {
         return (!c.alert || alertFeed) && ((c.key !== "score" && c.key !== "missed") || scored)
             && (c.on !== "levels" || isLevels) && (c.on !== "uoa" || isUoa) && (c.on !== "watch" || isLevels || isUoa)
@@ -585,9 +592,22 @@ ColumnLayout {
     // newly ticked column at the far end, past the horizontal scroll.
     readonly property var addedLater: ["theme"]
     function seenBy(key) { return layout.seen ? layout.seen.indexOf(key) >= 0 : addedLater.indexOf(key) < 0 }
+    // A column added by an update since this screen's layout was saved
+    // (moved, resized or picked in Columns). It stays hidden, offered in
+    // Columns, so an update and the restart after it never rearrange a
+    // table you set up (Matt, 2026-10-26: PM high, PM low, PM run and Runs
+    // appeared mid-table after restarts). A screen never arranged still
+    // gets the defaults.
+    function isNew(key) {
+        if (!layout.order && !layout.shown && !layout.widths) return false
+        if (layout.seen) return layout.seen.indexOf(key) < 0
+        if (addedLater.indexOf(key) >= 0) return false
+        return (layout.order || []).concat(layout.shown || []).indexOf(key) < 0
+    }
     function isShown(c) {
-        if (!layout.shown || !seenBy(c.key)) return defaultShown(c)
-        return layout.shown.indexOf(c.key) >= 0
+        if (layout.shown && seenBy(c.key) && !isNew(c.key)) return layout.shown.indexOf(c.key) >= 0
+        if (isNew(c.key)) return false
+        return defaultShown(c)
     }
     readonly property var columns: {
         const order = (layout.order || []).filter(k => layout.seen || addedLater.indexOf(k) < 0)
@@ -659,7 +679,13 @@ ColumnLayout {
     readonly property bool showsValue: columns.some(c => c.on === "value")
     function saveThis(changes) {
         const all = Object.assign({}, layoutAll)
-        all[feed] = Object.assign({}, layout, changes, { seen: allColumns.map(c => c.key) })
+        // The columns on show are written down with any change, so marking
+        // every column `seen` cannot bring in one that was being held back
+        // as new (isNew). Columns this screen cannot show yet (Score before a
+        // scorecard) keep their default.
+        const shown = changes.shown || layout.shown
+            || allColumns.filter(c => possible(c) ? isShown(c) : defaultShown(c)).map(c => c.key)
+        all[feed] = Object.assign({}, layout, changes, { shown: shown, seen: allColumns.map(c => c.key) })
         Plasmoid.configuration.screenerLayout = JSON.stringify(all)
     }
     function saveLayout(order, widths) { saveThis({ order: order, widths: widths }) }
@@ -728,8 +754,32 @@ ColumnLayout {
              + (h < 12 ? " am" : " pm")
     }
 
+    // When a headline dropped, in the Time column's clock, with the weekday
+    // when it was not today: "08:00 am · ACCESSWIRE · 12 min ago".
+    function newsWhen(r) {
+        if (!r.newsTime) return ""
+        const t = etTime(r.newsTime).replace(/:\d\d (am|pm)$/, " $1")
+        const age = Math.max(0, Math.round((Date.now() - r.newsTime) / 60000))
+        const ago = age < 60 ? i18n("%1 min ago", age)
+                  : age < 24 * 60 ? i18n("%1 h %2 min ago", Math.floor(age / 60), age % 60)
+                  : new Date(r.newsTime).toLocaleDateString(Qt.locale(), "ddd d MMM")
+        return [t, r.newsSource || "", ago].filter(x => x).join(" · ")
+    }
+
     // One dot per rule of the screen's scorecard, in its order, filled
     // where the row passed it.
+    // The score badge's tooltip: each rule of the screen's scorecard, passed
+    // (✓), missed (✗) or not known yet (?), with its target and the row's figure.
+    function scoreText(r) {
+        if (!card) return ""
+        const lines = card.rules.map(rule => {
+            const miss = (r.failed || []).find(f => f === rule.name || f === rule.name + "?")
+            const mark = miss === undefined ? "✓" : miss === rule.name + "?" ? "?" : "✗"
+            const v = Scorecards.valueText(rule, r)
+            return mark + "  " + rule.name + " " + Scorecards.targetText(rule) + (v ? "  —  " + v : "")
+        })
+        return i18n("%1: %2 of %3", card.name, r.score, r.total) + "\n" + lines.join("\n")
+    }
     function passed(r, rule) {
         return !(r.failed || []).some(f => f === rule.name || f === rule.name + "?")
     }
@@ -749,6 +799,11 @@ ColumnLayout {
                  + (r.count > 1 ? "\n" + i18n("%1 in %2s", r.count, Math.round((r.time - r.first) / 1000)) : "")
         case "symbol": return r.symbol
         case "price":  return has(r.price) ? money(r, r.price) : "—"
+        case "pmHigh": return has(r.pmHigh) ? money(r, r.pmHigh) : "—"
+        case "pmLow":  return has(r.pmLow) ? money(r, r.pmLow) : "—"
+        case "pmRun":  return pct(r.pmRun)
+        case "runs":   return r.runs > 0 ? r.runs + "×" : "—"
+        case "pmVol":  return big(r.pmVol)
         case "volume": return (r.market === "crypto" && has(r.volume) ? (r.currencySym || "$") : "") + big(r.volume)
         case "float":  return big(r.float)
         case "rvol":   return has(r.rvol) ? r.rvol.toFixed(2) : "—"
@@ -787,6 +842,9 @@ ColumnLayout {
         const pos = Kirigami.Theme.positiveTextColor, neg = Kirigami.Theme.negativeTextColor
         const tint = (c, a) => Qt.rgba(c.r, c.g, c.b, Math.max(0, Math.min(0.75, a)))
         switch (key) {
+        case "runs":
+            // A stock that keeps running: brighter for each session it ran.
+            return r.runs >= 2 ? tint(pos, 0.25 + 0.15 * r.runs) : "transparent"
         case "float":
             // Brightest for the tiniest floats.
             if (!(r.float > 0)) return "transparent"
@@ -794,9 +852,10 @@ ColumnLayout {
             if (r.float < 10e6) return tint(Kirigami.Theme.highlightColor, 0.45)
             if (r.float < 20e6) return tint(pos, 0.3)
             return "transparent"
+        case "pmRun":
         case "gap":
         case "change": {
-            const v = key === "gap" ? r.gap : r.change
+            const v = r[key]
             if (!has(v) || v === 0) return "transparent"
             return v > 0 ? tint(pos, 0.15 + v / 80) : tint(neg, 0.15 + -v / 20)
         }
@@ -1074,10 +1133,12 @@ ColumnLayout {
                                         Component {
                                             id: themeCell
                                             // The theme's glyph when the stock has one, else its sector's.
+                                            // Only themes are heat-coloured: a sector is always grey,
+                                            // since one that big has two +30% runners most days.
                                             Item {
                                                 readonly property bool isTheme: !!rowItem.modelData.theme
                                                 readonly property var th: rowItem.modelData.theme || rowItem.modelData.sector
-                                                readonly property var heat: isTheme ? rowItem.modelData.themeHeat : rowItem.modelData.sectorHeat
+                                                readonly property var heat: isTheme ? rowItem.modelData.themeHeat : null
                                                 ThemeGlyph {
                                                     id: glyph
                                                     anchors.centerIn: parent
@@ -1099,9 +1160,8 @@ ColumnLayout {
                                                               ? i18n("Theme: %1", Themes.explain(rowItem.modelData.theme.name,
                                                                                rowItem.modelData.themeHeat,
                                                                                scr.engine.themeTune))
-                                                              : rowItem.modelData.sector && rowItem.modelData.sectorHeat
-                                                              ? i18n("Sector (no theme): %1", Themes.explain(rowItem.modelData.sector.name,
-                                                                               rowItem.modelData.sectorHeat, scr.engine.themeTune))
+                                                              : rowItem.modelData.sector
+                                                              ? i18n("Sector (no theme): %1. Sectors are not heat-coloured; only themes are.", rowItem.modelData.sector.name)
                                                                 + (rowItem.modelData.sectorBreakdown ? "\n" + i18n("Today: %1", rowItem.modelData.sectorBreakdown) : "")
                                                               : ""
                                                     }
@@ -1162,6 +1222,19 @@ ColumnLayout {
                                                         color: "black"
                                                     }
                                                 }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    acceptedButtons: Qt.NoButton
+                                                    onContainsMouseChanged: scr.scoreHover = containsMouse
+                                                    // A row scrolled away under the pointer must not leave it set.
+                                                    Component.onDestruction: if (containsMouse) scr.scoreHover = false
+                                                    PlasmaComponents3.ToolTip {
+                                                        visible: parent.containsMouse && scr.scored
+                                                        text: scr.scoreText(rowItem.modelData)
+                                                        delay: Kirigami.Units.toolTipDelay
+                                                    }
+                                                }
                                                 Row {
                                                     visible: !scr.compactScore
                                                     anchors.left: badge.right
@@ -1189,12 +1262,15 @@ ColumnLayout {
                             }
 
                             PlasmaComponents3.ToolTip {
-                                // The newest headline, and what is behind the
-                                // dilution rating.
+                                // The newest headline and when it dropped, and
+                                // what is behind the dilution rating.
                                 readonly property string dil: rowItem.modelData.dilution
                                     ? scr.dilutionText(rowItem.modelData.dilution) : ""
-                                visible: rowItem.containsMouse && !scr.themeHover && (rowItem.modelData.newsTitle || dil) !== ""
-                                text: [rowItem.modelData.newsTitle || "", dil].filter(t => t).join("\n\n")
+                                readonly property string news: rowItem.modelData.newsTitle
+                                    ? rowItem.modelData.newsTitle + "\n" + scr.newsWhen(rowItem.modelData) : ""
+                                readonly property string runs: rowItem.modelData.runsText || ""
+                                visible: rowItem.containsMouse && !scr.themeHover && !scr.scoreHover && (news || dil || runs) !== ""
+                                text: [news, runs, dil].filter(t => t).join("\n\n")
                                 delay: Kirigami.Units.toolTipDelay
                             }
                         }
@@ -1258,6 +1334,21 @@ ColumnLayout {
         }
     }
 
+    // Yahoo refusing: the checks slow down and the stock list may be short,
+    // so alerts can lag a faster platform. Said, not hidden.
+    PlasmaComponents3.Label {
+        readonly property bool slow: scr.engine.passMs > Plasmoid.configuration.passSeconds * 1000
+        visible: slow || scr.engine.poolPartial
+        Layout.fillWidth: true
+        Layout.margins: Kirigami.Units.smallSpacing
+        font: Kirigami.Theme.smallFont
+        color: Kirigami.Theme.neutralTextColor
+        wrapMode: Text.WordWrap
+        textFormat: Text.PlainText
+        text: slow ? i18n("Yahoo is refusing some requests: checking every %1 s instead of %2 s, so alerts may lag.",
+                          Math.round(scr.engine.passMs / 1000), Plasmoid.configuration.passSeconds)
+                   : i18n("Yahoo refused part of the last stock-list refresh; the previous list is kept and it will be tried again.")
+    }
     // A scanner problem, shown whether or not the tools are open.
     PlasmaComponents3.Label {
         visible: scr.engine.bridgeError !== ""

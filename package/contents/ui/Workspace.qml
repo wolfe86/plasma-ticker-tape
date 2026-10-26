@@ -467,15 +467,23 @@ Item {
     // The journal as Markdown, for the trade journal: the trades opened or
     // closed on `day` (an ET date; empty = every day) and that day's notes.
     function exportJournal(day) {
+        // The day's screenshots first (every one in the folder, from any
+        // source), then the file.
+        const glob = shq(shotDir) + "/" + (day ? day + "_" : "") + "*.png"
+        run("ls -1 " + glob + " 2>/dev/null; true", (ok, out) =>
+            writeJournal(day, String(out || "").split("\n").map(x => x.trim()).filter(x => /\.png$/.test(x)).sort()))
+    }
+    function writeJournal(day, shots) {
         const inDay = ms => !day || (ms > 0 && etParts(ms)[0] === day)
         const money = v => (v < 0 ? "-$" : "$") + Math.abs(v).toFixed(2)
         const t = trades.filter(x => inDay(x.opened) || inDay(x.closed)).slice().reverse()
         const n = notes.filter(x => inDay(x.time)).slice().reverse()
-        const lines = ["# Options journal" + (day ? " — " + day : ""), "",
+        const withTrades = !!cfg.optionsFeature
+        const lines = [(withTrades ? "# Options journal" : "# Journal") + (day ? " — " + day : ""), "",
                        i18n("Times in New York time (ET). Exported from Plasma Ticker Tape."), ""]
-        lines.push("## " + i18n("Trades"), "")
-        if (!t.length) lines.push(i18n("None."), "")
-        for (const x of t) {
+        if (withTrades) lines.push("## " + i18n("Trades"), "")
+        if (withTrades && !t.length) lines.push(i18n("None."), "")
+        for (const x of (withTrades ? t : [])) {
             lines.push("### " + tradeLabel(x))
             lines.push("- " + i18n("Opened: %1, %2 %3", etStamp(x.opened), x.cost >= 0 ? i18n("paid") : i18n("received"), money(Math.abs(x.cost))))
             if (x.closed > 0) lines.push("- " + i18n("Closed: %1, value %2, result **%3**", etStamp(x.closed), money(x.exitValue), money(x.result)))
@@ -488,11 +496,19 @@ Item {
             lines.push("")
         }
         lines.push("## " + i18n("Notes"), "")
-        const loose = n.filter(m => !m.trade)
+        const loose = withTrades ? n.filter(m => !m.trade) : n
         if (!loose.length) lines.push(i18n("None."))
         for (const k of loose) {
             lines.push("- " + etStamp(k.time) + " **" + k.symbol + "**: " + (k.text || i18n("(screenshot)")))
             for (const p of k.images || []) lines.push("  " + mdImage(p))
+        }
+        lines.push("", "## " + i18n("Screenshots"), "")
+        if (!shots.length) lines.push(i18n("None."))
+        for (const p of shots) {
+            // 2026-10-26_094107-312_CLRO_quote.png -> "09:41:07 CLRO quote"
+            const m = p.replace(/^.*\//, "").match(/^(\d{4}-\d\d-\d\d)_(\d\d)(\d\d)(\d\d)-\d+_?(.*)\.png$/)
+            lines.push("- " + (m ? (day ? "" : m[1] + " ") + m[2] + ":" + m[3] + ":" + m[4] + " " + m[5].replace(/_/g, " ") : p.replace(/^.*\//, "")))
+            lines.push("  " + mdImage(p))
         }
         const name = "journal-" + (day || "all") + ".md"
         writeFile(exportDir, name, lines.join("\n") + "\n", (ok, path) => {
@@ -526,6 +542,16 @@ Item {
         const clean = x => String(x || "").replace(/[^A-Za-z0-9.=-]/g, "")
         return shotDir + "/" + et[0] + "_" + et[1].replace(/:/g, "") + "-" + String(Date.now() % 1000).padStart(3, "0") + "_"
                + (clean(symbol) || "note") + (clean(tag) ? "_" + clean(tag) : "") + ".png"
+    }
+    // Today's screenshots, for the Journal tab: every PNG in the folder
+    // whose name starts with the New York date -- pasted there, from a note,
+    // a chart or a quote window. Newest first.
+    property var dayShots: []
+    function loadDayShots() {
+        const day = etParts(Date.now())[0]
+        run("ls -1 " + shq(shotDir) + "/" + day + "_*.png 2>/dev/null; true", (ok, out) => {
+            dayShots = String(out || "").split("\n").map(x => x.trim()).filter(x => /\.png$/.test(x)).sort().reverse()
+        })
     }
     function pasteImage(symbol, done) {
         const path = shotPath(symbol, "")
@@ -567,7 +593,7 @@ Item {
         interval: 15 * 60000
         repeat: true
         triggeredOnStart: true
-        running: ws.cfg.ivRecord && ws.engine.currentPhase === "regular"
+        running: ws.cfg.ivRecord && ws.cfg.optionsFeature && ws.engine.currentPhase === "regular"
         onTriggered: {
             const day = ws.etParts(Date.now())[0]
             if (ws.ivDay === day || ws.engine.etMinutes(Date.now() / 1000) < 600) return
@@ -629,7 +655,7 @@ Item {
         interval: 5 * 60000
         repeat: true
         triggeredOnStart: true
-        running: ws.trades.some(t => !(t.closed > 0) && (t.legs || []).some(l => l.type !== "stock"))
+        running: !!ws.cfg.optionsFeature && ws.trades.some(t => !(t.closed > 0) && (t.legs || []).some(l => l.type !== "stock"))
         onTriggered: ws.checkExpiries()
     }
     function checkExpiries() {

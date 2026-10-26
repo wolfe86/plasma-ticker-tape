@@ -368,6 +368,7 @@ ColumnLayout {
         // to read a chain for each.
         property var move: null
         function loadMove() {
+            if (!Plasmoid.configuration.optionsFeature) return
             if (!earn || !event.ticker || !event.date || event.date < cal.todayIso) return
             const sym = event.ticker
             const at = Date.parse(event.date + "T" + (event.session === "amc" ? "21:00" : "13:00") + ":00Z")
@@ -772,8 +773,8 @@ ColumnLayout {
                             const seen = {}, out = []
                             for (const e of earn) {
                                 const g = cal.engine.groupsFor(e.ticker, "")
-                                // Theme when it has one, else sector -- the screener's rule.
-                                for (const p of [g.theme ? [g.theme, g.themeHeat] : [g.sector, g.sectorHeat]]) {
+                                // Themes only: sectors are not heat-coloured.
+                                for (const p of [g.theme ? [g.theme, g.themeHeat] : [null, null]]) {
                                     if (!p[0] || !p[1] || (p[1].status !== "hot" && p[1].status !== "building") || seen[p[0].id]) continue
                                     seen[p[0].id] = true
                                     out.push({ group: p[0], status: p[1].status, ticker: e.ticker })

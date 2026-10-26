@@ -87,8 +87,8 @@ Window {
     property string shotNote: ""
     property string lastShot: ""
     function shoot() {
-        const target = tv ? tvLoader : chartLoader
-        const path = ws.shotPath(entry.symbol, (tv ? "tv-" : "chart-") + rangeKey)
+        const target = quote ? quoteLoader : tv ? tvLoader : chartLoader
+        const path = ws.shotPath(entry.symbol, quote ? "quote" : (tv ? "tv-" : "chart-") + rangeKey)
         ws.run("mkdir -p " + ws.shq(ws.shotDir), ok => {
             if (!ok) { shotNote = i18n("Could not make %1", ws.shotDir); shotClear.restart(); return }
             target.grabToImage(r => {
@@ -201,13 +201,15 @@ Window {
                 text: cw.shotNote
             }
             PlasmaComponents3.ToolButton {
-                visible: !cw.quote
                 icon.name: "camera-photo"
                 onClicked: cw.shoot()
-                PlasmaComponents3.ToolTip { text: i18n("Save a screenshot of this chart in %1", cw.ws.shotDir) }
+                PlasmaComponents3.ToolTip {
+                    text: cw.quote ? i18n("Save a screenshot of this quote, as shown, in %1", cw.ws.shotDir)
+                                   : i18n("Save a screenshot of this chart in %1", cw.ws.shotDir)
+                }
             }
             PlasmaComponents3.ToolButton {
-                visible: !cw.quote && cw.lastShot !== ""
+                visible: cw.lastShot !== ""
                 icon.name: "folder-open"
                 onClicked: Qt.openUrlExternally("file://" + encodeURI(cw.ws.shotDir))
                 PlasmaComponents3.ToolTip { text: i18n("Open the screenshots folder") }
@@ -240,6 +242,9 @@ Window {
         // active ticker while linked, so the linked charts follow it too;
         // unlinked, it is this window's alone.
         Loader {
+            id: quoteLoader
+            // Its own background, for the screenshot (as the chart's).
+            Rectangle { anchors.fill: parent; z: -1; color: Kirigami.Theme.backgroundColor }
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: active

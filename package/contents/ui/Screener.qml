@@ -641,7 +641,7 @@ ColumnLayout {
     // FontMetrics, which is not an Item, gives other sizes.)
     readonly property real headPad: 2
     readonly property real cellPoints: Kirigami.Theme.smallFont.pointSize
-    readonly property string monoFamily: Kirigami.Theme.fixedWidthFont.family
+    readonly property string monoFamily: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
     readonly property string textFamily: Kirigami.Theme.defaultFont.family
     FontMetrics { id: cellFm; font.family: scr.monoFamily; font.pointSize: scr.cellPoints }
     FontMetrics { id: symFm; font.family: scr.monoFamily; font.pointSize: scr.cellPoints; font.bold: true }
@@ -1118,7 +1118,7 @@ ColumnLayout {
                                                 font.family: cellBox.key === "tags" || cellBox.key === "missed" || cellBox.key === "setup" || cellBox.key === "level"
                                                              || cellBox.key === "contract"
                                                              ? Kirigami.Theme.defaultFont.family
-                                                             : Kirigami.Theme.fixedWidthFont.family
+                                                             : (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                                 horizontalAlignment: cellBox.key === "tags" || cellBox.key === "missed" || cellBox.key === "setup" || cellBox.key === "level"
                                                                      ? Text.AlignLeft : Text.AlignRight
                                                 verticalAlignment: Text.AlignVCenter
@@ -1178,7 +1178,7 @@ ColumnLayout {
                                                     textFormat: Text.PlainText
                                                     text: rowItem.modelData.symbol
                                                     font.pointSize: Kirigami.Theme.smallFont.pointSize
-                                                    font.family: Kirigami.Theme.fixedWidthFont.family
+                                                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                                     font.bold: true
                                                     font.underline: true
                                                     elide: Text.ElideRight

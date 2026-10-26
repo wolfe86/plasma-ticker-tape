@@ -31,7 +31,7 @@ ColumnLayout {
         PlasmaComponents3.Label {
             visible: !jt.open
             font.bold: true
-            font.family: Kirigami.Theme.fixedWidthFont.family
+            font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
             color: jt.trade.result >= 0 ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.negativeTextColor
             text: jt.open ? "" : jt.money(jt.trade.result)
         }

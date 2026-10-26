@@ -534,14 +534,14 @@ PlasmaExtras.Representation {
                                 Layout.fillWidth: true
                                 horizontalAlignment: Text.AlignRight
                                 font.bold: true
-                                font.family: Kirigami.Theme.fixedWidthFont.family
+                                font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                 text: row.known ? pop.ticker.format(row.f, row.f.value) : "--"
                                 color: row.dirColour
                             }
                             PlasmaComponents3.Label {
                                 Layout.fillWidth: true
                                 horizontalAlignment: Text.AlignRight
-                                font.family: Kirigami.Theme.fixedWidthFont.family
+                                font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                 text: !row.known ? ""
                                     : (row.up ? "▲ +" : "▼ ") + row.f.pct.toFixed(2) + "%"
                                       + (row.f.stale ? " " + i18n("stale") : "")

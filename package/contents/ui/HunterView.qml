@@ -113,7 +113,7 @@ PlasmaComponents3.ScrollView {
                                 PlasmaComponents3.Label {
                                     visible: (grow.g.trend || []).length >= 2
                                     text: hunter.spark(grow.g.trend)
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
+                                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                     opacity: 0.7
                                     HoverHandler { id: trendHover }
                                     PlasmaComponents3.ToolTip {
@@ -234,7 +234,7 @@ PlasmaComponents3.ScrollView {
                                 text: urun.modelData.symbol
                                 textFormat: Text.PlainText
                                 font.bold: true
-                                font.family: Kirigami.Theme.fixedWidthFont.family
+                                font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                 Layout.preferredWidth: Kirigami.Units.gridUnit * 4
                             }
                             PlasmaComponents3.Label {

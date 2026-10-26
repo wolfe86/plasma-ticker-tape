@@ -991,7 +991,7 @@ ColumnLayout {
             text: detail.known ? detail.num(detail.f.value) : "--"
             font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.8
             font.bold: true
-            font.family: Kirigami.Theme.fixedWidthFont.family
+            font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
         }
         // Opened from a screen in another currency: the price in it too.
         PlasmaComponents3.Label {
@@ -1002,7 +1002,7 @@ ColumnLayout {
             text: visible ? "≈ " + def.sym + (detail.f.value * k >= 1 ? (detail.f.value * k).toFixed(2)
                                                  : (detail.f.value * k).toPrecision(4)) : ""
             font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.2
-            font.family: Kirigami.Theme.fixedWidthFont.family
+            font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
             opacity: 0.8
         }
         PlasmaComponents3.Label {
@@ -1013,7 +1013,7 @@ ColumnLayout {
                   + (detail.f.stale ? " · " + i18n("stale") : "")
             color: detail.f.stale ? Kirigami.Theme.disabledTextColor
                  : up ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.negativeTextColor
-            font.family: Kirigami.Theme.fixedWidthFont.family
+            font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
         }
         Item { Layout.fillWidth: true }
         // Change over the range shown, when it is longer than a day.
@@ -1023,7 +1023,7 @@ ColumnLayout {
                        ((detail.rangeChange >= 0 ? "+" : "")
                         + (detail.rangeChange / detail.refLevel * 100).toFixed(2)))
             color: detail.lineColour
-            font.family: Kirigami.Theme.fixedWidthFont.family
+            font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
         }
     }
 
@@ -1840,7 +1840,7 @@ ColumnLayout {
                     Layout.minimumWidth: implicitWidth
                     textFormat: Text.PlainText
                     text: Scorecards.valueText(ruleRow.modelData, detail.cardRow)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                 }
                 PlasmaComponents3.Label {
                     Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 5, implicitWidth)
@@ -1938,7 +1938,7 @@ ColumnLayout {
                     Layout.minimumWidth: implicitWidth
                     textFormat: Text.PlainText
                     text: modelData.value
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                 }
                 PlasmaComponents3.Label {
                     Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 5, implicitWidth)
@@ -2001,7 +2001,7 @@ ColumnLayout {
                         PlasmaComponents3.Label {
                             textFormat: Text.PlainText
                             text: modelData[1]
-                            font.family: Kirigami.Theme.fixedWidthFont.family
+                            font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                             horizontalAlignment: Text.AlignRight
                         }
                     }

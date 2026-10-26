@@ -167,7 +167,7 @@ ColumnLayout {
     }
     function contract(list, k) { return list.find(c => c.strike === k) || null }
     readonly property real cellW: Math.max(Kirigami.Units.gridUnit * 3, cellFm.advanceWidth("00000.00") + Kirigami.Units.smallSpacing * 2)
-    FontMetrics { id: cellFm; font.family: Kirigami.Theme.fixedWidthFont.family; font.pointSize: Kirigami.Theme.smallFont.pointSize }
+    FontMetrics { id: cellFm; font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace"); font.pointSize: Kirigami.Theme.smallFont.pointSize }
     readonly property var sideKeys: ["bid", "ask", "openInterest", "impliedVolatility"]
     function cellText(c, key) {
         if (!c) return ""
@@ -235,7 +235,7 @@ ColumnLayout {
                                 rightPadding: Kirigami.Units.smallSpacing
                                 horizontalAlignment: Text.AlignRight
                                 text: ov.cellText(strikeRow.c, modelData)
-                                font.family: Kirigami.Theme.fixedWidthFont.family
+                                font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                 font.pointSize: Kirigami.Theme.smallFont.pointSize
                             }
                         }
@@ -251,7 +251,7 @@ ColumnLayout {
                     horizontalAlignment: Text.AlignHCenter
                     text: strikeRow.modelData
                     font.bold: true
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                     color: ov.topOi.some(x => x.strike === strikeRow.modelData) ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.textColor
                 }
@@ -274,7 +274,7 @@ ColumnLayout {
                                 rightPadding: Kirigami.Units.smallSpacing
                                 horizontalAlignment: Text.AlignRight
                                 text: ov.cellText(strikeRow.p, modelData)
-                                font.family: Kirigami.Theme.fixedWidthFont.family
+                                font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                 font.pointSize: Kirigami.Theme.smallFont.pointSize
                             }
                         }
@@ -413,7 +413,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 PlasmaComponents3.Label { text: modelData[0]; opacity: 0.7; Layout.fillWidth: true; elide: Text.ElideRight; textFormat: Text.PlainText }
-                PlasmaComponents3.Label { text: modelData[1]; font.family: Kirigami.Theme.fixedWidthFont.family; textFormat: Text.PlainText }
+                PlasmaComponents3.Label { text: modelData[1]; font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace"); textFormat: Text.PlainText }
             }
         }
     }

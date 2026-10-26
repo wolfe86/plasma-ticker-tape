@@ -2,6 +2,12 @@
 
 Newest first. Versions follow `package/metadata.json`.
 
+## 1.4.1 (beta)
+
+### Fixed
+- **The panel froze after an hour or so of a busy session** (95% CPU, memory climbing past 2 GB). The 1.4 theme rules were worked out again for every alert row on every refresh, in every open window, and a day's alerts on one screen came to 1,700 rows. Each stock's theme and sector are now worked out once per data update and shared by its rows, each theme's reading once per change to the tally, and a screen's rows are rebuilt only when its alerts, facts, news, themes or settings change (and at least every 10 seconds).
+- Debian 13 (Plasma 6.3): the monospace font the widget asks Kirigami for is not there, so every price, time and figure logged `TypeError: Cannot read property 'family' of undefined`, dozens of times a minute. The widget now falls back to the system's monospace font.
+
 ## 1.4.0 (beta)
 
 A beta release, like 1.3: themes rebuilt as patterns judged on their record, premarket levels from Nasdaq, screenshots on the Journal tab and the quote window, and the Options features switched off until they are ready. Everything new here has had days of real use, not weeks.

@@ -2998,7 +2998,29 @@ Item {
     // scorecard with them.
     // The theme columns on a row: the story, and its heat. Flattened onto the
     // row so a scorecard rule can test them like any other measure.
-    function themeFields(sym) {
+    // A stock's theme and sector columns, worked out once per change to the
+    // tally, the facts or the news (and at most every 5 seconds for the
+    // quotes the traits read), then shared by every row of that stock. Done
+    // per row, a screen of a day's alerts took 0.7 s to rebuild, once a
+    // second in every open window, and froze the panel (2026-10-26: 95% CPU,
+    // 2.4 GB after 80 minutes).
+    property int factsGen: 0
+    onInfoChanged: factsGen++
+    onNewsByTickerChanged: factsGen++
+    onThemeStickyChanged: factsGen++
+    property var fieldMemo: ({ key: "", t: 0, theme: {}, sector: {} })     // filled in place
+    function memoFields(kind, sym, f) {
+        const key = themeGen + "/" + factsGen
+        const now = Date.now()
+        if (fieldMemo.key !== key || now - fieldMemo.t > 5000) {
+            fieldMemo.key = key; fieldMemo.t = now; fieldMemo.theme = {}; fieldMemo.sector = {}
+        }
+        const m = fieldMemo[kind]
+        return m[sym] || (m[sym] = f())
+    }
+    function themeFields(sym) { return memoFields("theme", sym, () => themeFieldsOf(sym)) }
+    function sectorFields(sym) { return memoFields("sector", sym, () => sectorFieldsOf(sym)) }
+    function themeFieldsOf(sym) {
         if (!cfg.themesOn) return { theme: null }
         const rr = repeatRuns(sym)
         const t = themeOf(sym)
@@ -3021,7 +3043,7 @@ Item {
     }
 
     // The sector columns on a row, as themeFields is for the theme.
-    function sectorFields(sym) {
+    function sectorFieldsOf(sym) {
         if (!cfg.sectorsOn) return { sector: null }
         const t = sectorOf(sym)
         if (!t) return { sector: null }
@@ -3068,7 +3090,24 @@ Item {
         r.tags = tags(r)
         return r
     }
-    function rows(id) {
+    function rows(id) { return rowsCached(id) }
+    // A screen's rows, rebuilt only when something they are made from has
+    // changed (its alerts or list, the facts, news, themes, fundamentals,
+    // the 200-day EMAs, the exchange rates, the screens or scorecards), and
+    // at least every 10 seconds. Every open window asks for its screen's
+    // rows each second; a day's alerts on a screen came to 1,700 rows, each
+    // copied with its facts, which kept plasmashell at 40% CPU (2026-10-26).
+    property var rowsMemo: ({})                          // id -> {deps, t, list}, filled in place
+    function rowsCached(id) {
+        const deps = [ranked[id], feeds[id], themeGen, factsGen, valueData, ema200, fx, screens, scorecards]
+        const e = rowsMemo[id]
+        const now = Date.now()
+        if (e && now - e.t < 10000 && e.deps.length === deps.length && e.deps.every((d, i) => d === deps[i])) return e.list
+        const list = rowsImpl(id)
+        rowsMemo[id] = { deps: deps, t: now, list: list }
+        return list
+    }
+    function rowsImpl(id) {
         const sc = screen(id)
         if (!sc) return []
         const listed = sc.type === "ranked" || sc.type === "value"

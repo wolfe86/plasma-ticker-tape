@@ -383,7 +383,7 @@ ColumnLayout {
             PlasmaComponents3.Label {
                 visible: !row.earn
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 4
-                font.family: Kirigami.Theme.fixedWidthFont.family
+                font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                 font.pointSize: Kirigami.Theme.smallFont.pointSize
                 text: cal.etTime(row.event.when) || i18n("All day")
                 opacity: 0.8
@@ -425,7 +425,7 @@ ColumnLayout {
                 spacing: 0
                 PlasmaComponents3.Label {
                     Layout.alignment: Qt.AlignRight
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                     textFormat: Text.PlainText
                     text: (row.earn ? i18n("EPS est %1", cal.figure(row.event.expected))
@@ -435,7 +435,7 @@ ColumnLayout {
                 PlasmaComponents3.Label {
                     visible: !!row.move
                     Layout.alignment: Qt.AlignRight
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                     color: Kirigami.Theme.neutralTextColor
                     textFormat: Text.PlainText
@@ -444,7 +444,7 @@ ColumnLayout {
                 PlasmaComponents3.Label {
                     visible: cal.hasActual(row.event)
                     Layout.alignment: Qt.AlignRight
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                     font.bold: true
                     color: cal.actualColor(row.event)
@@ -629,7 +629,7 @@ ColumnLayout {
                                     PlasmaComponents3.Label {
                                         Layout.fillWidth: true
                                         text: cal.etTime(card.modelData.when) || i18n("All day")
-                                        font.family: Kirigami.Theme.fixedWidthFont.family
+                                        font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                         font.pointSize: Kirigami.Theme.smallFont.pointSize
                                         opacity: 0.7
                                     }
@@ -648,7 +648,7 @@ ColumnLayout {
                                         Layout.fillWidth: true
                                         textFormat: Text.PlainText
                                         text: cal.figure(card.modelData.actual) + cal.arrow(card.modelData)
-                                        font.family: Kirigami.Theme.fixedWidthFont.family
+                                        font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                                         font.pointSize: Kirigami.Theme.smallFont.pointSize
                                         elide: Text.ElideRight
                                     }

@@ -302,7 +302,7 @@ PlasmoidItem {
         try { return JSON.parse(Plasmoid.configuration.themeIcons || "{}") } catch (e) { return ({}) }
     }
     readonly property int tapeIconPx: Math.round(tapeMetrics.height * 0.85)
-    FontMetrics { id: tapeMetrics; font.family: Kirigami.Theme.fixedWidthFont.family; font.pointSize: Kirigami.Theme.defaultFont.pointSize }
+    FontMetrics { id: tapeMetrics; font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace"); font.pointSize: Kirigami.Theme.defaultFont.pointSize }
     function themeImg(theme, status) {
         const heat = Themes.colour(status, (theme && theme.ramp) || Plasmoid.configuration.themeRamp)
         const own = theme ? Themes.custom(theme, themeIcons) : null
@@ -518,7 +518,7 @@ PlasmoidItem {
                         text: root.tapeText
                         textFormat: Text.StyledText
                         color: Kirigami.Theme.textColor
-                        font.family: Kirigami.Theme.fixedWidthFont.family
+                        font.family: (Kirigami.Theme.fixedWidthFont ? Kirigami.Theme.fixedWidthFont.family : "monospace")
                         font.pointSize: Kirigami.Theme.defaultFont.pointSize
                         onImplicitWidthChanged: if (index === 0) cell.loopWidth = implicitWidth
                         Component.onCompleted: if (index === 0) cell.loopWidth = implicitWidth
